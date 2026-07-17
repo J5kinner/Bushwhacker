@@ -59,6 +59,8 @@ proactive verification.
   `<type>(<scope>): <summary>`, where `<type>` is one of
   `feat`/`fix`/`docs`/`chore`/`refactor`/`perf`/`test`/`ci`.
   Explain *why* in the body when the summary line alone does not cover it.
+- **Attribution:** commits are attributed to the human author only.
+  Do **not** add `Co-Authored-By` trailers for AI assistants (Claude, Copilot, etc.).
 - Opening a PR gives you a **Vercel preview URL** — open it on your phone and confirm the
   change before merging.
 - **You self-merge** after reviewing your own PR. An agent may push a non-`main` branch and
