@@ -1,0 +1,19 @@
+{
+  "name": "HomeSync",
+  "short_name": "HomeSync",
+  "description": "Shared shopping, calendar, and chores for a two-person household.",
+  "start_url": "/shopping",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
