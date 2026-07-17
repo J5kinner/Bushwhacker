@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "@/components/bottom-nav";
 import { SwRegister } from "@/components/sw-register";
+import { auth } from "@/auth";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -23,19 +24,27 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const session = await auth();
+
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="bg-background text-foreground">
-        <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
-          <main className="flex-1 px-4 pb-24 pt-6">{children}</main>
-          <BottomNav />
-        </div>
+        {session ? (
+          // Authenticated: full app shell with the bottom tab bar.
+          <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
+            <main className="flex-1 px-4 pb-24 pt-6">{children}</main>
+            <BottomNav />
+          </div>
+        ) : (
+          // Unauthenticated (e.g. the sign-in page): no nav chrome.
+          <div className="mx-auto min-h-dvh w-full max-w-md">{children}</div>
+        )}
         <SwRegister />
       </body>
     </html>
