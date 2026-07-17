@@ -1,24 +1,49 @@
-// Seed the single household and its two members.
-// Idempotent: does nothing if a household already exists.
-// Rename the placeholder users later (or edit this file and re-run on a fresh DB).
+// Seed / sync the single household and its members from env (no personal data
+// in committed source — the repo is public).
+//   SEED_MEMBERS="Name:email,Name:email"   (in .env.local)
+// Renames existing member rows in order, inserts any extras. Safe to re-run.
 import { config } from "dotenv";
 config({ path: ".env.local" });
 import { neon } from "@neondatabase/serverless";
 
 const sql = neon(process.env.DATABASE_URL);
+const HOUSEHOLD_NAME = process.env.HOUSEHOLD_NAME || "Home";
 
-const existing = await sql`SELECT id FROM households LIMIT 1`;
-if (existing.length) {
-  console.log("Seed skipped: a household already exists.");
-  process.exit(0);
+const members = (process.env.SEED_MEMBERS || "")
+  .split(",")
+  .map((pair) => pair.trim())
+  .filter(Boolean)
+  .map((pair) => {
+    const idx = pair.indexOf(":");
+    return { name: pair.slice(0, idx).trim(), email: pair.slice(idx + 1).trim() };
+  })
+  .filter((m) => m.name && m.email);
+
+if (members.length === 0) {
+  console.error('SEED_MEMBERS is not set. Format: "Name:email,Name:email"');
+  process.exit(1);
 }
 
-const inserted = await sql`INSERT INTO households (name) VALUES ('Home') RETURNING id`;
-const householdId = inserted[0].id;
+let [household] = await sql`SELECT id FROM households LIMIT 1`;
+if (!household) {
+  [household] = await sql`INSERT INTO households (name) VALUES (${HOUSEHOLD_NAME}) RETURNING id`;
+  console.log(`created household "${HOUSEHOLD_NAME}"`);
+}
 
-await sql`
-  INSERT INTO users (household_id, name, email) VALUES
-    (${householdId}, 'You', 'you@example.com'),
-    (${householdId}, 'Partner', 'partner@example.com')`;
+const existing = await sql`
+  SELECT id FROM users WHERE household_id = ${household.id} ORDER BY created_at`;
 
-console.log('Seeded household "Home" + 2 users (you@example.com, partner@example.com).');
+for (let i = 0; i < members.length; i++) {
+  const { name, email } = members[i];
+  if (existing[i]) {
+    await sql`UPDATE users SET name = ${name}, email = ${email} WHERE id = ${existing[i].id}`;
+    console.log(`updated member: ${name} <${email}>`);
+  } else {
+    await sql`INSERT INTO users (household_id, name, email) VALUES (${household.id}, ${name}, ${email})`;
+    console.log(`inserted member: ${name} <${email}>`);
+  }
+}
+
+const current = await sql`
+  SELECT name, email FROM users WHERE household_id = ${household.id} ORDER BY created_at`;
+console.log("current members:", current.map((u) => `${u.name} <${u.email}>`).join(", "));
