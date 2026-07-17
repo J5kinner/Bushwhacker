@@ -35,6 +35,9 @@ yarn-error.log*
 # ...but keep the committed template
 !.env.local.example
 
+# local db backups (never commit real data)
+/backups/
+
 # vercel
 .vercel
 
