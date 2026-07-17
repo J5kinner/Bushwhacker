@@ -1,11 +1,12 @@
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getDb, isDbConfigured } from "@/db";
 import { households, users } from "@/db/schema";
+import { auth } from "@/auth";
 
 /**
- * The current household. HomeSync has exactly one, so until auth lands we resolve
- * the first (and only) household row. Returns null when the DB is unconfigured or
- * unseeded, so read paths can degrade to an empty state instead of throwing.
+ * The current household. HomeSync has exactly one, so we resolve the first (and
+ * only) household row. Returns null when the DB is unconfigured or unseeded, so
+ * read paths can degrade to an empty state instead of throwing.
  */
 export async function getHouseholdId(): Promise<string | null> {
   if (!isDbConfigured()) return null;
@@ -28,16 +29,17 @@ export async function requireHouseholdId(): Promise<string> {
 }
 
 /**
- * The acting user. Until auth lands we resolve the first member of the household.
- * Once auth exists this becomes "the signed-in user".
+ * The signed-in user, mapped from the session email to a `users` row.
+ * Email comparison is case-insensitive (Gmail normalises case).
  */
 export async function getCurrentUserId(): Promise<string | null> {
-  const householdId = await getHouseholdId();
-  if (!householdId) return null;
+  const session = await auth();
+  const email = session?.user?.email?.toLowerCase();
+  if (!email || !isDbConfigured()) return null;
   const [u] = await getDb()
     .select({ id: users.id })
     .from(users)
-    .where(eq(users.householdId, householdId))
+    .where(sql`lower(${users.email}) = ${email}`)
     .limit(1);
   return u?.id ?? null;
 }
@@ -46,7 +48,7 @@ export async function requireCurrentUserId(): Promise<string> {
   const id = await getCurrentUserId();
   if (!id) {
     throw new Error(
-      "No household member found. Seed at least one user (see Settings).",
+      "Signed-in account is not a household member. Check ALLOWED_EMAILS and the seeded users.",
     );
   }
   return id;

@@ -1,14 +1,43 @@
 import { CheckCircle2, XCircle } from "lucide-react";
 import { isDbConfigured } from "@/db";
+import { auth, signOut } from "@/auth";
+import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
   const dbOk = isDbConfigured();
+  const session = await auth();
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Account
+        </h2>
+        {session?.user ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-base">{session.user.name ?? "Signed in"}</p>
+              <p className="truncate text-sm text-zinc-500">{session.user.email}</p>
+            </div>
+            <form
+              action={async () => {
+                "use server";
+                await signOut({ redirectTo: "/signin" });
+              }}
+            >
+              <Button type="submit" variant="outline" size="sm">
+                Sign out
+              </Button>
+            </form>
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500">Not signed in.</p>
+        )}
+      </section>
 
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
@@ -34,12 +63,6 @@ export default function SettingsPage() {
         <p>
           HomeSync is for a two-person household — two accounts, one shared
           shopping list, calendar, and chore list.
-        </p>
-        <p>
-          Authentication is not wired up yet. Until it is, the app resolves the
-          first household and its first member. To get started once the database
-          is connected, run <code>pnpm db:migrate</code>, then seed one household
-          and two users.
         </p>
         <p>
           Chores are scored by <strong>mental load</strong>, not by time — see the
