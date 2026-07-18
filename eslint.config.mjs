@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Node built-in test files are run by `node --test`, not linted.
+    "**/*.test.mts",
   ]),
 ]);
 
