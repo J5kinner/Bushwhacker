@@ -1,13 +1,18 @@
 import { CheckCircle2, XCircle } from "lucide-react";
 import { isDbConfigured } from "@/db";
+import { getShoppingCategories } from "@/lib/queries";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { CategoryManager } from "./category-manager";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const dbOk = isDbConfigured();
-  const session = await auth();
+  const [session, categories] = await Promise.all([
+    auth(),
+    getShoppingCategories(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -54,6 +59,15 @@ export default async function SettingsPage() {
             {!dbOk && " — add DATABASE_URL to .env.local"}
           </span>
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Shopping categories
+        </h2>
+        <CategoryManager
+          initialCategories={categories.map((c) => ({ id: c.id, name: c.name }))}
+        />
       </section>
 
       <section className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
