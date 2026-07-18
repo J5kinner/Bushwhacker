@@ -1,9 +1,10 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ExternalLink } from "lucide-react";
 import type { ShoppingItem } from "@/db/schema";
 import { SHOPPING_CATEGORIES } from "@/lib/shopping-categories";
+import { extractLink, displayDomain } from "@/lib/links";
 import {
   addShoppingItem,
   deleteShoppingItem,
@@ -73,15 +74,19 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
 
   function onAdd(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) return;
+    const raw = name.trim();
+    if (!raw) return;
     const cat = category.trim() || null;
+    // Same rule as the server: split any pasted product URL out of the text so
+    // the optimistic row shows the clean name + chip straight away.
+    const { name: cleanName, url } = extractLink(raw);
+    if (!cleanName) return;
     const temp: ShoppingItem = {
       id: crypto.randomUUID(),
       householdId: "optimistic",
-      name: trimmed,
+      name: cleanName,
       category: cat,
-      url: null,
+      url,
       checked: false,
       addedById: null,
       createdAt: new Date(),
@@ -89,7 +94,7 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
     setName("");
     setCategory("");
     run({ type: "add", item: temp }, () =>
-      addShoppingItem({ name: trimmed, category: cat }),
+      addShoppingItem({ name: raw, category: cat }),
     );
   }
 
@@ -166,12 +171,26 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
                       aria-label={`Mark ${item.name} as bought`}
                     />
                     <span
-                      className={`flex-1 text-base ${
+                      className={`min-w-0 flex-1 truncate text-base ${
                         item.checked ? "text-zinc-400 line-through" : ""
                       }`}
                     >
                       {item.name}
                     </span>
+                    {item.url && (
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Open link for ${item.name}`}
+                        className="flex min-w-0 max-w-[45%] shrink-0 items-center gap-1 rounded-full border border-black/10 px-2 py-0.5 text-xs text-zinc-600 hover:border-black/30 dark:border-white/15 dark:text-zinc-300 dark:hover:border-white/40"
+                      >
+                        <ExternalLink className="size-3 shrink-0" aria-hidden />
+                        <span className="min-w-0 truncate">
+                          {displayDomain(item.url)}
+                        </span>
+                      </a>
+                    )}
                     <button
                       onClick={() =>
                         run({ type: "delete", id: item.id }, () =>
