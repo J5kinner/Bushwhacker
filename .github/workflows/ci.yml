@@ -18,3 +18,21 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+
+  migrations:
+    name: Migrations in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Regenerate migrations from db/schema.ts. A non-empty diff means a schema
+      # change landed without its `pnpm db:generate` migration committed alongside.
+      # `generate` is schema-only, so no DATABASE_URL is needed here.
+      # `< /dev/null` makes an ambiguous rename prompt fail fast rather than hang.
+      - run: pnpm db:generate < /dev/null
+      - run: git diff --exit-code db/migrations
