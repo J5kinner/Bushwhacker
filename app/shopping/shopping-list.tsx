@@ -3,6 +3,7 @@
 import { useOptimistic, useState, useTransition } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { ShoppingItem } from "@/db/schema";
+import { SHOPPING_CATEGORIES } from "@/lib/shopping-categories";
 import {
   addShoppingItem,
   deleteShoppingItem,
@@ -29,6 +30,16 @@ function reduce(items: ShoppingItem[], action: Action): ShoppingItem[] {
   }
 }
 
+// Sort key for a category heading: the dropdown categories come first, in the
+// order they are defined; any legacy free-text categories follow; "Other"
+// (uncategorised) always sits last.
+function categoryRank(name: string): number {
+  const defined = (SHOPPING_CATEGORIES as readonly string[]).indexOf(name);
+  if (defined !== -1) return defined;
+  if (name === OTHER) return Number.MAX_SAFE_INTEGER;
+  return SHOPPING_CATEGORIES.length;
+}
+
 function groupByCategory(items: ShoppingItem[]) {
   const groups = new Map<string, ShoppingItem[]>();
   for (const item of items) {
@@ -36,9 +47,8 @@ function groupByCategory(items: ShoppingItem[]) {
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(item);
   }
   return [...groups.entries()].sort(([a], [b]) => {
-    if (a === OTHER) return 1;
-    if (b === OTHER) return -1;
-    return a.localeCompare(b);
+    const rank = categoryRank(a) - categoryRank(b);
+    return rank !== 0 ? rank : a.localeCompare(b);
   });
 }
 
@@ -86,28 +96,43 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
 
   return (
     <div>
-      <form onSubmit={onAdd} className="mb-4 flex gap-2">
+      {/*
+        Mobile-first, overflow-safe layout: the name takes its own full-width
+        row, then the category dropdown (flex-1, min-w-0 so it can shrink) sits
+        beside the Add button. This keeps the whole form within the viewport on
+        narrow phones, so the Add button — and the fixed bottom nav — stay
+        reachable without any sideways scrolling.
+      */}
+      <form onSubmit={onAdd} className="mb-4 space-y-2">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Add an item…"
-          className="flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
+          className="w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
           aria-label="Item name"
         />
-        <input
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          placeholder="Category"
-          className="w-28 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
-          aria-label="Category (optional)"
-        />
-        <button
-          type="submit"
-          className="flex items-center justify-center rounded-lg bg-foreground px-3 text-background"
-          aria-label="Add item"
-        >
-          <Plus className="size-5" aria-hidden />
-        </button>
+        <div className="flex gap-2">
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
+            aria-label="Category (optional)"
+          >
+            <option value="">Category (optional)</option>
+            {SHOPPING_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            className="flex shrink-0 items-center justify-center rounded-lg bg-foreground px-4 py-2 text-background"
+            aria-label="Add item"
+          >
+            <Plus className="size-5" aria-hidden />
+          </button>
+        </div>
       </form>
 
       {error && (
