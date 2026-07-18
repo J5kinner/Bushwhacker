@@ -3,7 +3,6 @@
 import { useOptimistic, useState, useTransition } from "react";
 import { Plus, Trash2, ExternalLink } from "lucide-react";
 import type { ShoppingItem } from "@/db/schema";
-import { SHOPPING_CATEGORIES } from "@/lib/shopping-categories";
 import { extractLink, displayDomain } from "@/lib/links";
 import {
   addShoppingItem,
@@ -31,29 +30,35 @@ function reduce(items: ShoppingItem[], action: Action): ShoppingItem[] {
   }
 }
 
-// Sort key for a category heading: the dropdown categories come first, in the
-// order they are defined; any legacy free-text categories follow; "Other"
+// Sort key for a category heading: the household's categories come first, in
+// their configured order; any legacy free-text categories follow; "Other"
 // (uncategorised) always sits last.
-function categoryRank(name: string): number {
-  const defined = (SHOPPING_CATEGORIES as readonly string[]).indexOf(name);
+function categoryRank(name: string, categories: string[]): number {
+  const defined = categories.indexOf(name);
   if (defined !== -1) return defined;
   if (name === OTHER) return Number.MAX_SAFE_INTEGER;
-  return SHOPPING_CATEGORIES.length;
+  return categories.length;
 }
 
-function groupByCategory(items: ShoppingItem[]) {
+function groupByCategory(items: ShoppingItem[], categories: string[]) {
   const groups = new Map<string, ShoppingItem[]>();
   for (const item of items) {
     const key = item.category?.trim() || OTHER;
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(item);
   }
   return [...groups.entries()].sort(([a], [b]) => {
-    const rank = categoryRank(a) - categoryRank(b);
+    const rank = categoryRank(a, categories) - categoryRank(b, categories);
     return rank !== 0 ? rank : a.localeCompare(b);
   });
 }
 
-export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] }) {
+export function ShoppingList({
+  initialItems,
+  categories,
+}: {
+  initialItems: ShoppingItem[];
+  categories: string[];
+}) {
   const [optimistic, dispatch] = useOptimistic(initialItems, reduce);
   const [, startTransition] = useTransition();
   const [name, setName] = useState("");
@@ -98,7 +103,7 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
     );
   }
 
-  const groups = groupByCategory(optimistic);
+  const groups = groupByCategory(optimistic, categories);
 
   return (
     <div>
@@ -125,7 +130,7 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
             aria-label="Category (optional)"
           >
             <option value="">Category (optional)</option>
-            {SHOPPING_CATEGORIES.map((c) => (
+            {categories.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>

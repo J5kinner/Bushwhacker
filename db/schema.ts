@@ -8,6 +8,7 @@ import {
   date,
   timestamp,
   check,
+  unique,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -45,6 +46,29 @@ export const shoppingItems = pgTable("shopping_items", {
   addedById: uuid("added_by_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+/**
+ * The shopping-list categories a household can pick from, managed in Settings.
+ *
+ * Categories are household data (not a hardcoded list) so members can add and
+ * remove their own. `shopping_items.category` remains free text that stores the
+ * category *name*; these rows drive the dropdown and heading order. Removing a
+ * category nulls the label on its items (they fall under "Other").
+ */
+export const shoppingCategories = pgTable(
+  "shopping_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    name: text("name").notNull(),
+    // Walk order for the shop; smaller sorts first. New categories go last.
+    position: smallint("position").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("shopping_categories_household_name").on(t.householdId, t.name)],
+);
 
 export const calendarEvents = pgTable("calendar_events", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -113,6 +137,7 @@ export const chores = pgTable(
 );
 
 export type ShoppingItem = typeof shoppingItems.$inferSelect;
+export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
