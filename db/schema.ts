@@ -39,6 +39,8 @@ export const shoppingItems = pgTable("shopping_items", {
   name: text("name").notNull(),
   // Nullable: uncategorised items are grouped under "Other" in the UI.
   category: text("category"),
+  // The product link for this item, if one was pasted. Always http(s); null when none.
+  url: text("url"),
   checked: boolean("checked").notNull().default(false),
   addedById: uuid("added_by_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
