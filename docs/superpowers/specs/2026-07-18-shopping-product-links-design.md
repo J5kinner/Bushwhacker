@@ -59,7 +59,9 @@ export function displayDomain(url: string): string;
 
 Rules:
 
-- Match the first `https?://…` run in the text; strip trailing punctuation (`.,;:!?)]}`).
+- Match the first `https?://…` run in the text; strip trailing sentence punctuation (`.,;:!?'"`).
+  A trailing closing bracket (`)`, `]`, `}`) is stripped only when it is unbalanced within the URL,
+  so links that legitimately contain brackets (e.g. `.../Nirvana_(band)`) are preserved.
 - Validate it with the `URL` constructor and require `protocol` to be `http:` or `https:` — anything
   else (e.g. `javascript:`, or a bare `coles.com.au` with no scheme) is treated as plain text, not a
   link.

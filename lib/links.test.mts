@@ -47,6 +47,20 @@ test("extractLink links the first URL and leaves later ones in the name", () => 
   assert.equal(r.name, "Milk https://b.com/2");
 });
 
+test("extractLink keeps a balanced closing bracket inside the URL", () => {
+  assert.deepEqual(extractLink("https://en.wikipedia.org/wiki/Nirvana_(band)"), {
+    name: "en.wikipedia.org",
+    url: "https://en.wikipedia.org/wiki/Nirvana_(band)",
+  });
+});
+
+test("extractLink strips an unbalanced trailing bracket", () => {
+  assert.equal(
+    extractLink("Snacks https://coles.com.au/p/x)").url,
+    "https://coles.com.au/p/x",
+  );
+});
+
 test("displayDomain strips www and the path", () => {
   assert.equal(displayDomain("https://www.woolworths.com.au/shop/x?y=1"), "woolworths.com.au");
 });

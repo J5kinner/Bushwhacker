@@ -4,8 +4,40 @@
  * source of truth) and the client (optimistic UI) can share exactly one rule.
  */
 
-// Characters a URL should not keep when it is typed inline in a sentence.
-const TRAILING_PUNCTUATION = /[.,;:!?)\]}'"]+$/;
+// Sentence punctuation that is almost never part of a URL; a trailing run of it
+// is stripped from a pasted link.
+const ALWAYS_STRIP = new Set([".", ",", ";", ":", "!", "?", "'", '"']);
+// Closing brackets are stripped from the end only when unbalanced within the URL,
+// so links that legitimately contain them — e.g. .../Nirvana_(band) — survive.
+const CLOSERS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+
+/**
+ * Strip trailing punctuation a URL picked up from surrounding prose, while
+ * keeping brackets that are actually part of the URL. A trailing closing bracket
+ * is only dropped when the URL has more of it than the matching opener.
+ */
+function trimUrlPunctuation(url: string): string {
+  let end = url.length;
+  while (end > 0) {
+    const ch = url[end - 1];
+    if (ALWAYS_STRIP.has(ch)) {
+      end -= 1;
+      continue;
+    }
+    const opener = CLOSERS[ch];
+    if (opener) {
+      const slice = url.slice(0, end);
+      const closes = slice.split(ch).length - 1;
+      const opens = slice.split(opener).length - 1;
+      if (closes > opens) {
+        end -= 1;
+        continue;
+      }
+    }
+    break;
+  }
+  return url.slice(0, end);
+}
 
 /**
  * Split free text into a clean name and the first http(s) URL it contains.
@@ -21,7 +53,7 @@ export function extractLink(text: string): { name: string; url: string | null } 
   if (!match) return { name: trimmed, url: null };
 
   const raw = match[0];
-  const candidate = raw.replace(TRAILING_PUNCTUATION, "");
+  const candidate = trimUrlPunctuation(raw);
   let parsed: URL;
   try {
     parsed = new URL(candidate);
