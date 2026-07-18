@@ -81,6 +81,7 @@ export function ShoppingList({ initialItems }: { initialItems: ShoppingItem[] })
       householdId: "optimistic",
       name: trimmed,
       category: cat,
+      url: null,
       checked: false,
       addedById: null,
       createdAt: new Date(),

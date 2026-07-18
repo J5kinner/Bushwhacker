@@ -8,6 +8,13 @@
       "when": 1784272209035,
       "tag": "0000_useful_corsair",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784339690682,
+      "tag": "0001_real_micromacro",
+      "breakpoints": true
     }
   ]
 }
