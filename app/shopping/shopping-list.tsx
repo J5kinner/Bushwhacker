@@ -4,6 +4,7 @@ import { useOptimistic, useState, useTransition } from "react";
 import { Plus, Trash2, ExternalLink } from "lucide-react";
 import type { ShoppingItem } from "@/db/schema";
 import { extractLink, displayDomain } from "@/lib/links";
+import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import {
   addShoppingItem,
   deleteShoppingItem,
@@ -64,6 +65,7 @@ export function ShoppingList({
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const keyboardInset = useKeyboardInset();
 
   function run(optimistic: Action, action: () => Promise<void>) {
     setError(null);
@@ -107,49 +109,6 @@ export function ShoppingList({
 
   return (
     <div>
-      {/*
-        Mobile-first, overflow-safe layout: the name takes its own full-width
-        row, then the category dropdown (flex-1, min-w-0 so it can shrink) sits
-        beside the Add button. This keeps the whole form within the viewport on
-        narrow phones, so the Add button — and the fixed bottom nav — stay
-        reachable without any sideways scrolling.
-      */}
-      <form onSubmit={onAdd} className="mb-4 space-y-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Add an item…"
-          className="w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
-          aria-label="Item name"
-        />
-        <div className="flex gap-2">
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
-            aria-label="Category (optional)"
-          >
-            <option value="">Category (optional)</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            className="flex shrink-0 items-center justify-center rounded-lg bg-foreground px-4 py-2 text-background"
-            aria-label="Add item"
-          >
-            <Plus className="size-5" aria-hidden />
-          </button>
-        </div>
-      </form>
-
-      {error && (
-        <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>
-      )}
-
       {groups.length === 0 ? (
         <p className="mt-10 text-center text-sm text-zinc-500">
           Nothing on the list yet.
@@ -214,6 +173,64 @@ export function ShoppingList({
           ))}
         </div>
       )}
+
+      {/* Spacer so the last item can scroll clear of the fixed add bar. */}
+      <div aria-hidden className="h-24" />
+
+      {/*
+        The add-item bar is pinned to the bottom of the screen, just above the
+        bottom nav, so adding items is always within thumb reach. While typing
+        it lifts to sit above the on-screen keyboard (keyboardInset); when the
+        keyboard is closed it rests above the nav (nav height + safe area).
+
+        Mobile-first, overflow-safe form: the name takes its own full-width row,
+        then the category dropdown (flex-1, min-w-0 so it can shrink) sits beside
+        the Add button, keeping everything within a narrow viewport.
+      */}
+      <div
+        className="fixed inset-x-0 z-30 mx-auto w-full max-w-md border-t border-black/10 bg-background/95 px-4 py-3 backdrop-blur dark:border-white/10"
+        style={{
+          bottom:
+            keyboardInset > 0
+              ? keyboardInset
+              : "calc(4rem + env(safe-area-inset-bottom))",
+        }}
+      >
+        {error && (
+          <p className="mb-2 text-sm text-red-600 dark:text-red-400">{error}</p>
+        )}
+        <form onSubmit={onAdd} className="space-y-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Add an item…"
+            className="w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
+            aria-label="Item name"
+          />
+          <div className="flex gap-2">
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/40"
+              aria-label="Category (optional)"
+            >
+              <option value="">Category (optional)</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              className="flex shrink-0 items-center justify-center rounded-lg bg-foreground px-4 py-2 text-background"
+              aria-label="Add item"
+            >
+              <Plus className="size-5" aria-hidden />
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
