@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { asc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -9,16 +10,55 @@ import {
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId } from "./household";
 
+/**
+ * Read queries are cached server-side under a tag per domain, so navigations
+ * are answered from the cache instead of Neon. Server Actions revalidate the
+ * matching tag after each mutation, so the cache is never stale — see
+ * CACHE_TAGS for the tag each mutation must bust.
+ */
+export const CACHE_TAGS = {
+  shoppingItems: "shopping-items",
+  shoppingCategories: "shopping-categories",
+  calendarEvents: "calendar-events",
+  chores: "chores",
+} as const;
+
+const fetchShoppingItems = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select()
+      .from(shoppingItems)
+      .where(eq(shoppingItems.householdId, householdId))
+      .orderBy(asc(shoppingItems.createdAt)),
+  ["shopping-items"],
+  { tags: [CACHE_TAGS.shoppingItems] },
+);
+
 /** All shopping items for the household, oldest first. Empty if no DB/household. */
 export async function getShoppingItems() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
+  return fetchShoppingItems(householdId);
+}
+
+const categoryOrder = [
+  asc(shoppingCategories.position),
+  asc(shoppingCategories.name),
+] as const;
+
+function selectCategories(householdId: string) {
   return getDb()
     .select()
-    .from(shoppingItems)
-    .where(eq(shoppingItems.householdId, householdId))
-    .orderBy(asc(shoppingItems.createdAt));
+    .from(shoppingCategories)
+    .where(eq(shoppingCategories.householdId, householdId))
+    .orderBy(...categoryOrder);
 }
+
+const fetchShoppingCategories = unstable_cache(
+  (householdId: string) => selectCategories(householdId),
+  ["shopping-categories"],
+  { tags: [CACHE_TAGS.shoppingCategories] },
+);
 
 /**
  * The household's shopping categories, in walk order. Empty if no DB/household.
@@ -26,25 +66,18 @@ export async function getShoppingItems() {
  * The first time a household has none, this seeds the defaults so the dropdown
  * and Settings list start populated and fully editable. `onConflictDoNothing`
  * makes a concurrent double-seed harmless (the unique household+name constraint
- * would otherwise throw).
+ * would otherwise throw). Seeding happens outside the cached read — tags can't
+ * be revalidated during render, so the write must not be cached; the empty
+ * cached result self-heals on the next category mutation.
  */
 export async function getShoppingCategories() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
-  const db = getDb();
-  const order = [
-    asc(shoppingCategories.position),
-    asc(shoppingCategories.name),
-  ] as const;
 
-  const existing = await db
-    .select()
-    .from(shoppingCategories)
-    .where(eq(shoppingCategories.householdId, householdId))
-    .orderBy(...order);
+  const existing = await fetchShoppingCategories(householdId);
   if (existing.length > 0) return existing;
 
-  await db
+  await getDb()
     .insert(shoppingCategories)
     .values(
       DEFAULT_SHOPPING_CATEGORIES.map((name, i) => ({
@@ -54,31 +87,41 @@ export async function getShoppingCategories() {
       })),
     )
     .onConflictDoNothing();
-  return db
-    .select()
-    .from(shoppingCategories)
-    .where(eq(shoppingCategories.householdId, householdId))
-    .orderBy(...order);
+  return selectCategories(householdId);
 }
+
+const fetchCalendarEvents = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select()
+      .from(calendarEvents)
+      .where(eq(calendarEvents.householdId, householdId))
+      .orderBy(asc(calendarEvents.startDate)),
+  ["calendar-events"],
+  { tags: [CACHE_TAGS.calendarEvents] },
+);
 
 /** Upcoming calendar events, earliest start first. */
 export async function getCalendarEvents() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
-  return getDb()
-    .select()
-    .from(calendarEvents)
-    .where(eq(calendarEvents.householdId, householdId))
-    .orderBy(asc(calendarEvents.startDate));
+  return fetchCalendarEvents(householdId);
 }
+
+const fetchChores = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select()
+      .from(chores)
+      .where(eq(chores.householdId, householdId))
+      .orderBy(asc(chores.nextDueAt)),
+  ["chores"],
+  { tags: [CACHE_TAGS.chores] },
+);
 
 /** All chores for the household, soonest due first. */
 export async function getChores() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
-  return getDb()
-    .select()
-    .from(chores)
-    .where(eq(chores.householdId, householdId))
-    .orderBy(asc(chores.nextDueAt));
+  return fetchChores(householdId);
 }
