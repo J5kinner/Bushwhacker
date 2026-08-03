@@ -1,12 +1,13 @@
 "use client";
 
-import { useOptimistic, useState, useTransition } from "react";
+import { useOptimistic, useRef, useState, useTransition } from "react";
 import { Plus, Trash2, ExternalLink } from "lucide-react";
 import type { ShoppingItem } from "@/db/schema";
 import { extractLink, displayDomain } from "@/lib/links";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import {
   addShoppingItem,
+  clearBoughtItems,
   deleteShoppingItem,
   setShoppingItemChecked,
 } from "./actions";
@@ -14,7 +15,8 @@ import {
 type Action =
   | { type: "add"; item: ShoppingItem }
   | { type: "toggle"; id: string; checked: boolean }
-  | { type: "delete"; id: string };
+  | { type: "delete"; id: string }
+  | { type: "clear" };
 
 const OTHER = "Other";
 
@@ -28,6 +30,8 @@ function reduce(items: ShoppingItem[], action: Action): ShoppingItem[] {
       );
     case "delete":
       return items.filter((i) => i.id !== action.id);
+    case "clear":
+      return items.filter((i) => !i.checked);
   }
 }
 
@@ -65,6 +69,8 @@ export function ShoppingList({
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardInset = useKeyboardInset();
 
   function run(optimistic: Action, action: () => Promise<void>) {
@@ -105,10 +111,43 @@ export function ShoppingList({
     );
   }
 
+  // Two-tap clear: the first tap arms a confirm state that disarms itself
+  // after a beat, so a stray thumb can't wipe the bought list in one go.
+  function onClearBought() {
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    if (!confirmClear) {
+      setConfirmClear(true);
+      confirmTimer.current = setTimeout(() => setConfirmClear(false), 4000);
+      return;
+    }
+    setConfirmClear(false);
+    run({ type: "clear" }, () => clearBoughtItems());
+  }
+
   const groups = groupByCategory(optimistic, categories);
+  const boughtCount = optimistic.filter((i) => i.checked).length;
 
   return (
     <div>
+      {boughtCount > 0 && (
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-sm text-zinc-500">
+            {boughtCount} bought
+          </span>
+          <button
+            onClick={onClearBought}
+            className={`rounded-lg px-2 py-1 text-sm font-medium ${
+              confirmClear
+                ? "text-red-600 dark:text-red-400"
+                : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+            }`}
+          >
+            {confirmClear
+              ? `Clear ${boughtCount} item${boughtCount === 1 ? "" : "s"}?`
+              : "Clear bought"}
+          </button>
+        </div>
+      )}
       {groups.length === 0 ? (
         <p className="mt-10 text-center text-sm text-zinc-500">
           Nothing on the list yet.
