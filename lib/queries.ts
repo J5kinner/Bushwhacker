@@ -1,11 +1,12 @@
 import { unstable_cache } from "next/cache";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   shoppingItems,
   shoppingCategories,
   calendarEvents,
   chores,
+  recipes,
 } from "@/db/schema";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId } from "./household";
@@ -21,6 +22,7 @@ export const CACHE_TAGS = {
   shoppingCategories: "shopping-categories",
   calendarEvents: "calendar-events",
   chores: "chores",
+  recipes: "recipes",
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -88,6 +90,24 @@ export async function getShoppingCategories() {
     )
     .onConflictDoNothing();
   return selectCategories(householdId);
+}
+
+const fetchRecipes = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select()
+      .from(recipes)
+      .where(eq(recipes.householdId, householdId))
+      .orderBy(desc(recipes.createdAt)),
+  ["recipes"],
+  { tags: [CACHE_TAGS.recipes] },
+);
+
+/** Saved recipes for the household, newest first. Empty if no DB/household. */
+export async function getRecipes() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchRecipes(householdId);
 }
 
 const fetchCalendarEvents = unstable_cache(
