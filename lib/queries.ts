@@ -1,10 +1,11 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   shoppingItems,
   shoppingCategories,
   calendarEvents,
   chores,
+  recipes,
 } from "@/db/schema";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId } from "./household";
@@ -59,6 +60,17 @@ export async function getShoppingCategories() {
     .from(shoppingCategories)
     .where(eq(shoppingCategories.householdId, householdId))
     .orderBy(...order);
+}
+
+/** Saved recipes for the household, newest first. Empty if no DB/household. */
+export async function getRecipes() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return getDb()
+    .select()
+    .from(recipes)
+    .where(eq(recipes.householdId, householdId))
+    .orderBy(desc(recipes.createdAt));
 }
 
 /** Upcoming calendar events, earliest start first. */

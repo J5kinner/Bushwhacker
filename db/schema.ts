@@ -9,6 +9,7 @@ import {
   timestamp,
   check,
   unique,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -68,6 +69,28 @@ export const shoppingCategories = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [unique("shopping_categories_household_name").on(t.householdId, t.name)],
+);
+
+/**
+ * Recipes saved from recipetineats.com. `ingredients` keeps the raw ingredient
+ * strings from the page's structured data, so "add to list" can recreate the
+ * shopping items at any time. The URL is stored canonicalised (no query/hash)
+ * and is unique per household, so re-importing a recipe refreshes the saved
+ * copy instead of duplicating it.
+ */
+export const recipes = pgTable(
+  "recipes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    ingredients: jsonb("ingredients").$type<string[]>().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("recipes_household_url").on(t.householdId, t.url)],
 );
 
 export const calendarEvents = pgTable("calendar_events", {
@@ -137,6 +160,7 @@ export const chores = pgTable(
 );
 
 export type ShoppingItem = typeof shoppingItems.$inferSelect;
+export type Recipe = typeof recipes.$inferSelect;
 export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type Chore = typeof chores.$inferSelect;

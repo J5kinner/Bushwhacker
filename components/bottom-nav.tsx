@@ -2,10 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShoppingCart, CalendarDays, ListChecks, Settings } from "lucide-react";
+import {
+  ShoppingCart,
+  BookOpen,
+  CalendarDays,
+  ListChecks,
+  Settings,
+} from "lucide-react";
 
 const TABS = [
   { href: "/shopping", label: "Shopping", Icon: ShoppingCart },
+  { href: "/recipes", label: "Recipes", Icon: BookOpen },
   { href: "/calendar", label: "Calendar", Icon: CalendarDays },
   { href: "/chores", label: "Chores", Icon: ListChecks },
   { href: "/settings", label: "Settings", Icon: Settings },
