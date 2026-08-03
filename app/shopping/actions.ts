@@ -40,6 +40,20 @@ export async function deleteShoppingItem(id: string) {
   revalidatePath("/shopping");
 }
 
+/** Remove every checked item for the household in one go, after a shop. */
+export async function clearBoughtItems() {
+  const householdId = await requireHouseholdId();
+  await getDb()
+    .delete(shoppingItems)
+    .where(
+      and(
+        eq(shoppingItems.householdId, householdId),
+        eq(shoppingItems.checked, true),
+      ),
+    );
+  revalidatePath("/shopping");
+}
+
 /**
  * Add a shopping category for the household. No-ops on blank input or a
  * case-insensitive duplicate; new categories sort last (highest position).
