@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "@/components/bottom-nav";
+import { LiveRefresh } from "@/components/live-refresh";
 import { SwRegister } from "@/components/sw-register";
 import { auth } from "@/auth";
 
@@ -40,6 +41,7 @@ export default async function RootLayout({
           <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
             <main className="flex-1 px-4 pb-24 pt-6">{children}</main>
             <BottomNav />
+            <LiveRefresh />
           </div>
         ) : (
           // Unauthenticated (e.g. the sign-in page): no nav chrome.

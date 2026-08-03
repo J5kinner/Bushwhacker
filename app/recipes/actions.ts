@@ -1,10 +1,11 @@
 "use server";
 
 import { and, eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { recipes, shoppingItems } from "@/db/schema";
 import { requireHouseholdId } from "@/lib/household";
+import { CACHE_TAGS } from "@/lib/queries";
 import { fetchRecipe, RecipeImportError } from "@/lib/recipe-import";
 
 /** Insert one shopping item per ingredient, uncategorised (grouped as "Other"). */
@@ -13,7 +14,7 @@ async function addIngredientsToList(householdId: string, ingredients: string[]) 
   await getDb()
     .insert(shoppingItems)
     .values(ingredients.map((name) => ({ householdId, name })));
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingItems);
 }
 
 /**
@@ -51,7 +52,7 @@ export async function importRecipe(
     });
 
   await addIngredientsToList(householdId, recipe.ingredients);
-  revalidatePath("/recipes");
+  updateTag(CACHE_TAGS.recipes);
   return { title: recipe.title, ingredientCount: recipe.ingredients.length };
 }
 
@@ -72,5 +73,5 @@ export async function deleteRecipe(id: string) {
   await getDb()
     .delete(recipes)
     .where(and(eq(recipes.id, id), eq(recipes.householdId, householdId)));
-  revalidatePath("/recipes");
+  updateTag(CACHE_TAGS.recipes);
 }

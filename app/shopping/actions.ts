@@ -1,11 +1,12 @@
 "use server";
 
 import { and, eq, max, sql } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { shoppingItems, shoppingCategories } from "@/db/schema";
 import { requireHouseholdId } from "@/lib/household";
 import { extractLink } from "@/lib/links";
+import { CACHE_TAGS } from "@/lib/queries";
 
 export async function addShoppingItem(input: {
   name: string;
@@ -22,7 +23,7 @@ export async function addShoppingItem(input: {
     url,
     category: input.category?.trim() || null,
   });
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingItems);
 }
 
 export async function setShoppingItemChecked(id: string, checked: boolean) {
@@ -31,13 +32,13 @@ export async function setShoppingItemChecked(id: string, checked: boolean) {
     .update(shoppingItems)
     .set({ checked })
     .where(eq(shoppingItems.id, id));
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingItems);
 }
 
 export async function deleteShoppingItem(id: string) {
   await requireHouseholdId();
   await getDb().delete(shoppingItems).where(eq(shoppingItems.id, id));
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingItems);
 }
 
 /** Remove every checked item for the household in one go, after a shop. */
@@ -51,7 +52,7 @@ export async function clearBoughtItems() {
         eq(shoppingItems.checked, true),
       ),
     );
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingItems);
 }
 
 /**
@@ -85,8 +86,7 @@ export async function addShoppingCategory(name: string) {
     .insert(shoppingCategories)
     .values({ householdId, name: trimmed, position: (agg?.max ?? -1) + 1 })
     .onConflictDoNothing();
-  revalidatePath("/settings");
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingCategories);
 }
 
 /**
@@ -126,6 +126,6 @@ export async function removeShoppingCategory(id: string) {
         eq(shoppingCategories.householdId, householdId),
       ),
     );
-  revalidatePath("/settings");
-  revalidatePath("/shopping");
+  updateTag(CACHE_TAGS.shoppingCategories);
+  updateTag(CACHE_TAGS.shoppingItems);
 }

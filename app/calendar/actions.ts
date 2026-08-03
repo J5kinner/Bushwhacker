@@ -1,10 +1,11 @@
 "use server";
 
 import { eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { calendarEvents } from "@/db/schema";
 import { requireHouseholdId, getCurrentUserId } from "@/lib/household";
+import { CACHE_TAGS } from "@/lib/queries";
 
 export async function addCalendarEvent(input: {
   title: string;
@@ -25,11 +26,11 @@ export async function addCalendarEvent(input: {
     notes: input.notes?.trim() || null,
     createdById,
   });
-  revalidatePath("/calendar");
+  updateTag(CACHE_TAGS.calendarEvents);
 }
 
 export async function deleteCalendarEvent(id: string) {
   await requireHouseholdId();
   await getDb().delete(calendarEvents).where(eq(calendarEvents.id, id));
-  revalidatePath("/calendar");
+  updateTag(CACHE_TAGS.calendarEvents);
 }

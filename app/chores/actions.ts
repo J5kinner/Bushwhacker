@@ -1,11 +1,12 @@
 "use server";
 
 import { eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { chores } from "@/db/schema";
 import { requireHouseholdId, requireCurrentUserId } from "@/lib/household";
 import { scoreChoreLoad, type Rating0to3 } from "@/lib/chore-load";
+import { CACHE_TAGS } from "@/lib/queries";
 
 const clamp = (n: number, max: number) =>
   Math.max(0, Math.min(max, Math.round(n)));
@@ -56,7 +57,7 @@ export async function addChore(input: AddChoreInput) {
       nextDueAt: intervalDays ? new Date() : null,
     });
 
-  revalidatePath("/chores");
+  updateTag(CACHE_TAGS.chores);
 }
 
 export async function completeChore(id: string) {
@@ -80,11 +81,11 @@ export async function completeChore(id: string) {
     .set({ lastCompletedAt: now, lastCompletedById: userId, nextDueAt })
     .where(eq(chores.id, id));
 
-  revalidatePath("/chores");
+  updateTag(CACHE_TAGS.chores);
 }
 
 export async function deleteChore(id: string) {
   await requireHouseholdId();
   await getDb().delete(chores).where(eq(chores.id, id));
-  revalidatePath("/chores");
+  updateTag(CACHE_TAGS.chores);
 }
