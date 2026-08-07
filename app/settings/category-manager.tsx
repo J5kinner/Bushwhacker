@@ -87,11 +87,16 @@ export function CategoryManager({
       ) : (
         <ul className="divide-y divide-black/5 dark:divide-white/10">
           {optimistic.map((category) => (
-            <li
-              key={category.id}
-              className="flex items-center gap-3 py-2"
-            >
-              <span className="min-w-0 flex-1 truncate text-base">
+            /*
+              Category names are typed by hand and are short in practice, so
+              this row clips only past about 33 characters — the lowest-value of
+              the four sites. It takes the shopping row's shape anyway, because
+              it is the same row: a label and a delete button. Leaving one list
+              truncating while its identical neighbour wraps is the kind of
+              inconsistency that costs more to explain later than to fix now.
+            */
+            <li key={category.id} className="flex items-start gap-3 py-2">
+              <span className="min-w-0 flex-1 wrap-break-word text-base">
                 {category.name}
               </span>
               <button
@@ -100,7 +105,7 @@ export function CategoryManager({
                     removeShoppingCategory(category.id),
                   )
                 }
-                className="text-zinc-400 hover:text-red-500"
+                className="flex h-6 shrink-0 items-center text-zinc-400 hover:text-red-500"
                 aria-label={`Remove ${category.name}`}
               >
                 <Trash2 className="size-4" aria-hidden />

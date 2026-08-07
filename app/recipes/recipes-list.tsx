@@ -119,40 +119,54 @@ export function RecipesList({ initialRecipes }: { initialRecipes: Recipe[] }) {
       ) : (
         <ul className="divide-y divide-black/5 dark:divide-white/10">
           {optimistic.map((recipe) => (
-            <li key={recipe.id} className="flex items-center gap-3 py-3">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-base">{recipe.title}</p>
+            /*
+              This row is the cramped one. "Add to list" is a 111px text button
+              and the row also carries a delete button, which left the title
+              column just 137px at 320px — narrow enough that "Pad Thai" filled
+              it exactly and any real recipe name clipped. Wrapping inside 137px
+              would have been technically readable and practically miserable: a
+              65-character title needs five lines in that gutter.
+
+              So the row is stacked rather than widened. The title takes a
+              full-width line of its own and wraps there, giving it the whole
+              288px, and the domain/ingredient-count line moves down to share a
+              second row with the two buttons. Both buttons keep their exact
+              size and their right-hand position; only their line changes.
+            */
+            <li key={recipe.id} className="py-3">
+              <p className="wrap-break-word text-base">{recipe.title}</p>
+              <div className="mt-1 flex items-center gap-3">
                 <a
                   href={recipe.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-zinc-500 hover:underline dark:text-zinc-400"
+                  className="flex min-w-0 flex-1 items-center gap-1 text-xs text-zinc-500 hover:underline dark:text-zinc-400"
                 >
                   <ExternalLink className="size-3 shrink-0" aria-hidden />
                   {displayDomain(recipe.url)} · {recipe.ingredients.length}{" "}
                   ingredients
                 </a>
+                <button
+                  onClick={() => onAddToList(recipe)}
+                  disabled={addingId !== null}
+                  className="flex shrink-0 items-center gap-1 rounded-full border border-black/10 px-3 py-1.5 text-sm hover:border-black/30 disabled:opacity-60 dark:border-white/15 dark:hover:border-white/40"
+                  aria-label={`Add ${recipe.title} ingredients to the shopping list`}
+                >
+                  {addingId === recipe.id ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <ListPlus className="size-4" aria-hidden />
+                  )}
+                  Add to list
+                </button>
+                <button
+                  onClick={() => onDelete(recipe)}
+                  className="shrink-0 text-zinc-400 hover:text-red-500"
+                  aria-label={`Delete ${recipe.title}`}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                </button>
               </div>
-              <button
-                onClick={() => onAddToList(recipe)}
-                disabled={addingId !== null}
-                className="flex shrink-0 items-center gap-1 rounded-full border border-black/10 px-3 py-1.5 text-sm hover:border-black/30 disabled:opacity-60 dark:border-white/15 dark:hover:border-white/40"
-                aria-label={`Add ${recipe.title} ingredients to the shopping list`}
-              >
-                {addingId === recipe.id ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : (
-                  <ListPlus className="size-4" aria-hidden />
-                )}
-                Add to list
-              </button>
-              <button
-                onClick={() => onDelete(recipe)}
-                className="shrink-0 text-zinc-400 hover:text-red-500"
-                aria-label={`Delete ${recipe.title}`}
-              >
-                <Trash2 className="size-4" aria-hidden />
-              </button>
             </li>
           ))}
         </ul>
