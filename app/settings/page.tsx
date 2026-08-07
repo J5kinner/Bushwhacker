@@ -1,22 +1,24 @@
 import { CheckCircle2, XCircle } from "lucide-react";
-import { isDbConfigured } from "@/db";
 import { getShoppingCategories } from "@/lib/queries";
+import { getSetupIssue } from "@/lib/household";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { SetupNotice } from "@/components/db-notice";
 import { CategoryManager } from "./category-manager";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const dbOk = isDbConfigured();
-  const [session, categories] = await Promise.all([
+  const [session, categories, setupIssue] = await Promise.all([
     auth(),
     getShoppingCategories(),
+    getSetupIssue(),
   ]);
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      {setupIssue && <SetupNotice issue={setupIssue} />}
 
       <section>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
@@ -49,14 +51,14 @@ export default async function SettingsPage() {
           Status
         </h2>
         <div className="flex items-center gap-2 text-sm">
-          {dbOk ? (
+          {setupIssue === null ? (
             <CheckCircle2 className="size-4 text-emerald-500" aria-hidden />
           ) : (
             <XCircle className="size-4 text-amber-500" aria-hidden />
           )}
+          {/* The notice above carries the detail; this line is the summary. */}
           <span>
-            Database {dbOk ? "connected" : "not connected"}
-            {!dbOk && " — add DATABASE_URL to .env.local"}
+            Household {setupIssue === null ? "ready" : "setup incomplete"}
           </span>
         </div>
       </section>

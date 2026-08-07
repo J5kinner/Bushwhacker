@@ -4,9 +4,14 @@ import { and, eq, max, sql } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { shoppingItems, shoppingCategories } from "@/db/schema";
-import { requireHouseholdId } from "@/lib/household";
+import { getHouseholdId } from "@/lib/household";
 import { extractLink } from "@/lib/links";
 import { CACHE_TAGS } from "@/lib/queries";
+
+// Every write below starts by resolving the household. A deployment with no
+// database, or with a database that has no household seeded, has nowhere to put
+// the row: fail closed and return early instead of throwing a 500 at the user —
+// the SetupNotice on the page says which step is missing.
 
 export async function addShoppingItem(input: {
   name: string;
@@ -16,7 +21,8 @@ export async function addShoppingItem(input: {
   // splitting out any pasted product URL.
   const { name, url } = extractLink(input.name);
   if (!name) return;
-  const householdId = await requireHouseholdId();
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
   await getDb().insert(shoppingItems).values({
     householdId,
     name,
@@ -27,7 +33,7 @@ export async function addShoppingItem(input: {
 }
 
 export async function setShoppingItemChecked(id: string, checked: boolean) {
-  await requireHouseholdId();
+  if (!(await getHouseholdId())) return;
   await getDb()
     .update(shoppingItems)
     .set({ checked })
@@ -36,14 +42,15 @@ export async function setShoppingItemChecked(id: string, checked: boolean) {
 }
 
 export async function deleteShoppingItem(id: string) {
-  await requireHouseholdId();
+  if (!(await getHouseholdId())) return;
   await getDb().delete(shoppingItems).where(eq(shoppingItems.id, id));
   updateTag(CACHE_TAGS.shoppingItems);
 }
 
 /** Remove every checked item for the household in one go, after a shop. */
 export async function clearBoughtItems() {
-  const householdId = await requireHouseholdId();
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
   await getDb()
     .delete(shoppingItems)
     .where(
@@ -62,7 +69,8 @@ export async function clearBoughtItems() {
 export async function addShoppingCategory(name: string) {
   const trimmed = name.trim();
   if (!trimmed) return;
-  const householdId = await requireHouseholdId();
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
   const db = getDb();
 
   const [dupe] = await db
@@ -94,7 +102,8 @@ export async function addShoppingCategory(name: string) {
  * "Other" (their `category` is nulled) before the category row is deleted.
  */
 export async function removeShoppingCategory(id: string) {
-  const householdId = await requireHouseholdId();
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
   const db = getDb();
 
   const [category] = await db
