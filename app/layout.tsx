@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { BottomNav } from "@/components/bottom-nav";
 import { LiveRefresh } from "@/components/live-refresh";
@@ -48,6 +49,12 @@ export default async function RootLayout({
           <div className="mx-auto min-h-dvh w-full max-w-md">{children}</div>
         )}
         <SwRegister />
+        {/*
+          Outside the session branch on purpose: the sign-in page's load
+          performance counts too. Renders null and injects a deferred script,
+          and sends nothing in development.
+        */}
+        <SpeedInsights />
       </body>
     </html>
   );

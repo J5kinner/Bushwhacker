@@ -29,6 +29,16 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
 
+  // Leave Vercel's telemetry alone. The Speed Insights vitals beacon is a POST
+  // and already skips the check above, but its loader script is a same-origin
+  // GET (/_vercel/speed-insights/script.js), so without this it would be stored
+  // in the offline cache. Two reasons not to: telemetry has no business in a
+  // household device's cache, and the offline fallback below answers an
+  // unmatched request with the /shopping HTML document, which as a reply to a
+  // script request is a console parse error for no benefit.
+  // Matched by prefix, so it also covers any future /_vercel/* telemetry route.
+  if (new URL(request.url).pathname.startsWith("/_vercel/")) return;
+
   event.respondWith(
     fetch(request)
       .then((response) => {
