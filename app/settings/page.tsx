@@ -25,10 +25,23 @@ export default async function SettingsPage() {
           Account
         </h2>
         {session?.user ? (
-          <div className="flex items-center justify-between gap-3">
+          /*
+            The email wraps rather than truncating. The margin here was thinner
+            than it looked: the column is 204px at 320px, and the signed-in
+            address fits with about two characters to spare, so a slightly
+            longer one loses its tail — and the tail is the domain, which is the
+            part that tells you which of the two household accounts you are in.
+            `wrap-break-word` is what does the work, an address being a single
+            unbroken token that ordinary wrapping will not break.
+          */
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="truncate text-base">{session.user.name ?? "Signed in"}</p>
-              <p className="truncate text-sm text-zinc-500">{session.user.email}</p>
+              <p className="wrap-break-word text-base">
+                {session.user.name ?? "Signed in"}
+              </p>
+              <p className="wrap-break-word text-sm text-zinc-500">
+                {session.user.email}
+              </p>
             </div>
             <form
               action={async () => {

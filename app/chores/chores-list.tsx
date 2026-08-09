@@ -30,10 +30,14 @@ const BAND_STYLES: Record<CliBand, string> = {
   high: "bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300",
 };
 
+// `whitespace-nowrap` keeps the pill on one line: without it the label wrapped
+// inside its own border whenever the row ran short of width, so "high · 100"
+// rendered as a three-line blob. `align-middle` seats it on the text baseline
+// of the meta line it now leads.
 function CliBadge({ score, band }: { score: number; band: CliBand }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${BAND_STYLES[band]}`}
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 align-middle text-xs font-medium ${BAND_STYLES[band]}`}
       title="Mental-load score (0–100). Tap the chore for the breakdown."
     >
       {band} · {score}
@@ -216,24 +220,45 @@ export function ChoresList({ initialChores }: { initialChores: Chore[] }) {
       ) : (
         <ul className="divide-y divide-black/5 dark:divide-white/10">
           {optimistic.map((chore) => (
-            <li key={chore.id} className="flex items-center gap-3 py-3">
+            /*
+              The title wraps over as many lines as it needs, matching the
+              shopping list. The CLI badge is what makes this row different: it
+              used to share the title's line, and because it could shrink it
+              stole width from the title *and* deformed itself doing so — a
+              100-character chore showed 23% of its title beside a three-line
+              pill.
+
+              Keeping the badge on that line but fixing its width was the
+              obvious alternative; it was rejected because a full-size pill
+              leaves the title only 138px at 320px, well under the 228px the
+              shopping list gives its names. Leading the meta line instead hands
+              the title the column's full 216px, and it costs no extra row
+              height because the badge sits in the meta text's own inline flow
+              rather than on a line of its own. The badge also gains a fixed
+              left edge on every row, so bands are easier to scan down the list
+              than when they floated at the end of a variable-length title.
+
+              As on the shopping row, `items-start` plus a one-line-height box
+              on each control pins both buttons to the first line.
+            */
+            <li key={chore.id} className="flex items-start gap-3 py-3">
               <button
                 onClick={() =>
                   run({ type: "complete", id: chore.id, at: new Date() }, () =>
                     completeChore(chore.id),
                   )
                 }
-                className="flex size-8 shrink-0 items-center justify-center rounded-full border border-black/15 text-zinc-500 hover:border-emerald-500 hover:text-emerald-600 dark:border-white/20"
+                className="-my-1 flex size-8 shrink-0 items-center justify-center rounded-full border border-black/15 text-zinc-500 hover:border-emerald-500 hover:text-emerald-600 dark:border-white/20"
                 aria-label={`Mark ${chore.title} done`}
               >
                 <Check className="size-4" aria-hidden />
               </button>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-base">{chore.title}</span>
-                  <CliBadge score={chore.cliScore} band={chore.cliBand} />
-                </div>
+                <span className="block wrap-break-word text-base">
+                  {chore.title}
+                </span>
                 <p className="text-xs text-zinc-500">
+                  <CliBadge score={chore.cliScore} band={chore.cliBand} />{" "}
                   {chore.lastCompletedAt
                     ? `Last done ${new Date(chore.lastCompletedAt).toLocaleDateString()}`
                     : "Not done yet"}
@@ -248,7 +273,7 @@ export function ChoresList({ initialChores }: { initialChores: Chore[] }) {
                     deleteChore(chore.id),
                   )
                 }
-                className="text-zinc-400 hover:text-red-500"
+                className="flex h-6 shrink-0 items-center text-zinc-400 hover:text-red-500"
                 aria-label={`Delete ${chore.title}`}
               >
                 <Trash2 className="size-4" aria-hidden />

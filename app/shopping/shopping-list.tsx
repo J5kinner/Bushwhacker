@@ -161,7 +161,20 @@ export function ShoppingList({
               </h2>
               <ul className="divide-y divide-black/5 dark:divide-white/10">
                 {items.map((item) => (
-                  <li key={item.id} className="flex items-center gap-3 py-2">
+                  /*
+                    The name wraps onto as many lines as it needs, so a long item
+                    is always fully readable — a shopping list is useless if you
+                    cannot tell which sourdough was meant.
+
+                    Two details make that work in a 320px-wide viewport. The name
+                    and its link chip share a `min-w-0 flex-1` column (the same
+                    shape the chores and recipes lists use) so the name gets the
+                    row's full width instead of competing with the chip for it.
+                    And the row aligns to `items-start`, with the checkbox and
+                    delete button each sized to one line-height, so both controls
+                    stay pinned to the first line however tall the row grows.
+                  */
+                  <li key={item.id} className="flex items-start gap-3 py-2">
                     <input
                       type="checkbox"
                       checked={item.checked}
@@ -170,37 +183,39 @@ export function ShoppingList({
                           setShoppingItemChecked(item.id, e.target.checked),
                         )
                       }
-                      className="size-5 shrink-0 accent-current"
+                      className="my-0.5 size-5 shrink-0 accent-current"
                       aria-label={`Mark ${item.name} as bought`}
                     />
-                    <span
-                      className={`min-w-0 flex-1 truncate text-base ${
-                        item.checked ? "text-zinc-400 line-through" : ""
-                      }`}
-                    >
-                      {item.name}
-                    </span>
-                    {item.url && (
-                      <a
-                        href={item.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Open link for ${item.name}`}
-                        className="flex min-w-0 max-w-[45%] shrink-0 items-center gap-1 rounded-full border border-black/10 px-2 py-0.5 text-xs text-zinc-600 hover:border-black/30 dark:border-white/15 dark:text-zinc-300 dark:hover:border-white/40"
+                    <div className="min-w-0 flex-1">
+                      <span
+                        className={`block wrap-break-word text-base ${
+                          item.checked ? "text-zinc-400 line-through" : ""
+                        }`}
                       >
-                        <ExternalLink className="size-3 shrink-0" aria-hidden />
-                        <span className="min-w-0 truncate">
-                          {displayDomain(item.url)}
-                        </span>
-                      </a>
-                    )}
+                        {item.name}
+                      </span>
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Open link for ${item.name}`}
+                          className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full border border-black/10 px-2 py-0.5 text-xs text-zinc-600 hover:border-black/30 dark:border-white/15 dark:text-zinc-300 dark:hover:border-white/40"
+                        >
+                          <ExternalLink className="size-3 shrink-0" aria-hidden />
+                          <span className="min-w-0 truncate">
+                            {displayDomain(item.url)}
+                          </span>
+                        </a>
+                      )}
+                    </div>
                     <button
                       onClick={() =>
                         run({ type: "delete", id: item.id }, () =>
                           deleteShoppingItem(item.id),
                         )
                       }
-                      className="text-zinc-400 hover:text-red-500"
+                      className="flex h-6 shrink-0 items-center text-zinc-400 hover:text-red-500"
                       aria-label={`Delete ${item.name}`}
                     >
                       <Trash2 className="size-4" aria-hidden />
