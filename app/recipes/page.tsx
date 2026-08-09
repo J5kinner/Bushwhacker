@@ -1,17 +1,20 @@
-import { isDbConfigured } from "@/db";
 import { getRecipes } from "@/lib/queries";
-import { DbNotice } from "@/components/db-notice";
+import { getSetupIssue } from "@/lib/household";
+import { SetupNotice } from "@/components/db-notice";
 import { RecipesList } from "./recipes-list";
 
 export const dynamic = "force-dynamic";
 
 export default async function RecipesPage() {
-  const recipes = await getRecipes();
+  const [recipes, setupIssue] = await Promise.all([
+    getRecipes(),
+    getSetupIssue(),
+  ]);
 
   return (
     <div>
       <h1 className="mb-4 text-2xl font-semibold tracking-tight">Recipes</h1>
-      {!isDbConfigured() && <DbNotice />}
+      {setupIssue && <SetupNotice issue={setupIssue} />}
       <RecipesList initialRecipes={recipes} />
     </div>
   );

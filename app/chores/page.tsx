@@ -1,12 +1,12 @@
-import { isDbConfigured } from "@/db";
 import { getChores } from "@/lib/queries";
-import { DbNotice } from "@/components/db-notice";
+import { getSetupIssue } from "@/lib/household";
+import { SetupNotice } from "@/components/db-notice";
 import { ChoresList } from "./chores-list";
 
 export const dynamic = "force-dynamic";
 
 export default async function ChoresPage() {
-  const chores = await getChores();
+  const [chores, setupIssue] = await Promise.all([getChores(), getSetupIssue()]);
 
   return (
     <div>
@@ -14,7 +14,7 @@ export default async function ChoresPage() {
       <p className="mb-4 text-sm text-zinc-500">
         Scored by mental load, not by minutes.
       </p>
-      {!isDbConfigured() && <DbNotice />}
+      {setupIssue && <SetupNotice issue={setupIssue} />}
       <ChoresList initialChores={chores} />
     </div>
   );

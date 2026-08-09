@@ -4,8 +4,13 @@ import { eq } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { calendarEvents } from "@/db/schema";
-import { requireHouseholdId, getCurrentUserId } from "@/lib/household";
+import { getHouseholdId, getCurrentUserId } from "@/lib/household";
 import { CACHE_TAGS } from "@/lib/queries";
+
+// No seeded household means nowhere to store the event, so these writes fail
+// closed rather than throwing a 500 at the user — the SetupNotice on the page
+// says which step is missing. `createdById` stays nullable: an event still saves
+// when the signed-in account has no member row yet.
 
 export async function addCalendarEvent(input: {
   title: string;
@@ -15,7 +20,8 @@ export async function addCalendarEvent(input: {
 }) {
   const title = input.title.trim();
   if (!title || !input.startDate) return;
-  const householdId = await requireHouseholdId();
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
   const createdById = await getCurrentUserId();
 
   await getDb().insert(calendarEvents).values({
@@ -30,7 +36,7 @@ export async function addCalendarEvent(input: {
 }
 
 export async function deleteCalendarEvent(id: string) {
-  await requireHouseholdId();
+  if (!(await getHouseholdId())) return;
   await getDb().delete(calendarEvents).where(eq(calendarEvents.id, id));
   updateTag(CACHE_TAGS.calendarEvents);
 }

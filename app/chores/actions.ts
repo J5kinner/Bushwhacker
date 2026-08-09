@@ -4,9 +4,14 @@ import { eq } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { chores } from "@/db/schema";
-import { requireHouseholdId, requireCurrentUserId } from "@/lib/household";
+import { getHouseholdId, getCurrentUserId } from "@/lib/household";
 import { scoreChoreLoad, type Rating0to3 } from "@/lib/chore-load";
 import { CACHE_TAGS } from "@/lib/queries";
+
+// A chore needs both a seeded household and a household member to own the
+// thinking for it (chores.owner_id is NOT NULL), so these writes fail closed on
+// either missing piece rather than throwing a 500 at the user — the SetupNotice
+// on the page says which step is missing.
 
 const clamp = (n: number, max: number) =>
   Math.max(0, Math.min(max, Math.round(n)));
@@ -26,8 +31,9 @@ export async function addChore(input: AddChoreInput) {
   const title = input.title.trim();
   if (!title) return;
 
-  const householdId = await requireHouseholdId();
-  const ownerId = await requireCurrentUserId();
+  const householdId = await getHouseholdId();
+  const ownerId = await getCurrentUserId();
+  if (!householdId || !ownerId) return;
 
   const ratings = {
     anticipate: clamp(input.anticipate, 3) as Rating0to3,
@@ -61,8 +67,9 @@ export async function addChore(input: AddChoreInput) {
 }
 
 export async function completeChore(id: string) {
-  await requireHouseholdId();
-  const userId = await requireCurrentUserId();
+  const householdId = await getHouseholdId();
+  const userId = await getCurrentUserId();
+  if (!householdId || !userId) return;
 
   const [chore] = await getDb()
     .select({ intervalDays: chores.intervalDays })
@@ -85,7 +92,7 @@ export async function completeChore(id: string) {
 }
 
 export async function deleteChore(id: string) {
-  await requireHouseholdId();
+  if (!(await getHouseholdId())) return;
   await getDb().delete(chores).where(eq(chores.id, id));
   updateTag(CACHE_TAGS.chores);
 }

@@ -1,20 +1,21 @@
-import { isDbConfigured } from "@/db";
 import { getShoppingItems, getShoppingCategories } from "@/lib/queries";
-import { DbNotice } from "@/components/db-notice";
+import { getSetupIssue } from "@/lib/household";
+import { SetupNotice } from "@/components/db-notice";
 import { ShoppingList } from "./shopping-list";
 
 export const dynamic = "force-dynamic";
 
 export default async function ShoppingPage() {
-  const [items, categories] = await Promise.all([
+  const [items, categories, setupIssue] = await Promise.all([
     getShoppingItems(),
     getShoppingCategories(),
+    getSetupIssue(),
   ]);
 
   return (
     <div>
       <h1 className="mb-4 text-2xl font-semibold tracking-tight">Shopping</h1>
-      {!isDbConfigured() && <DbNotice />}
+      {setupIssue && <SetupNotice issue={setupIssue} />}
       <ShoppingList
         initialItems={items}
         categories={categories.map((c) => c.name)}
