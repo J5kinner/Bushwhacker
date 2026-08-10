@@ -5,6 +5,7 @@ import { MapPin, BatteryLow, Crosshair } from "lucide-react";
 import type { MemberLocation } from "@/lib/queries";
 import { setLocationSharing, recordMyLocation } from "./actions";
 import { LocationMap } from "./location-map";
+import { ProximityMeter } from "./proximity-meter";
 
 /** A coarse relative age: exact seconds are noise for "are they nearly home?". */
 function relativeAge(capturedAt: Date): string {
@@ -162,11 +163,14 @@ export function LocationView({
       {members.length === 0 ? (
         <p className="text-sm text-zinc-500">No household members yet.</p>
       ) : (
-        <ul className="divide-y divide-black/5 dark:divide-white/10">
-          {members.map((member) => (
-            <MemberRow key={member.userId} member={member} />
-          ))}
-        </ul>
+        <>
+          <ul className="divide-y divide-black/5 dark:divide-white/10">
+            {members.map((member) => (
+              <MemberRow key={member.userId} member={member} />
+            ))}
+          </ul>
+          <ProximityMeter members={members} />
+        </>
       )}
     </div>
   );
