@@ -36,8 +36,9 @@ const NOTICES: Record<
     message: (
       <>
         You are signed in, but this account is not a household member yet, so
-        chores cannot be added or ticked off. Add the address you signed in with
-        to <code>SEED_MEMBERS</code> and re-run <code>scripts/seed.mjs</code>.
+        nothing you save will be attributed to you. Add the address you signed
+        in with to <code>SEED_MEMBERS</code> and re-run{" "}
+        <code>scripts/seed.mjs</code>.
       </>
     ),
   },

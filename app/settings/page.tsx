@@ -1,19 +1,44 @@
+import { headers } from "next/headers";
+import { eq } from "drizzle-orm";
 import { CheckCircle2, XCircle } from "lucide-react";
+import { getDb, isDbConfigured } from "@/db";
+import { users } from "@/db/schema";
 import { getShoppingCategories } from "@/lib/queries";
-import { getSetupIssue } from "@/lib/household";
+import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { SetupNotice } from "@/components/db-notice";
 import { CategoryManager } from "./category-manager";
+import { LocationSetup } from "./location-setup";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const [session, categories, setupIssue] = await Promise.all([
+  const [session, categories, setupIssue, userId, headerList] = await Promise.all([
     auth(),
     getShoppingCategories(),
     getSetupIssue(),
+    getCurrentUserId(),
+    headers(),
   ]);
+
+  // Read the deployment's own host so the endpoint shown is the one this phone
+  // is actually talking to — localhost in development, the preview URL on a
+  // preview, production in production. Hard-coding it would hand someone the
+  // wrong URL on two of those three.
+  const host = headerList.get("host") ?? "localhost:3000";
+  const protocol = host.startsWith("localhost") ? "http" : "https";
+  const endpoint = `${protocol}://${host}/api/location`;
+
+  let locationToken: string | null = null;
+  if (userId && isDbConfigured()) {
+    const [member] = await getDb()
+      .select({ token: users.locationToken })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    locationToken = member?.token ?? null;
+  }
 
   return (
     <div className="space-y-6">
@@ -85,17 +110,24 @@ export default async function SettingsPage() {
         />
       </section>
 
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Location sharing
+        </h2>
+        <LocationSetup initialToken={locationToken} endpoint={endpoint} />
+      </section>
+
       <section className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
           About
         </h2>
         <p>
           HomeSync is for a two-person household — two accounts, one shared
-          shopping list, calendar, and chore list.
+          shopping list, calendar, and map.
         </p>
         <p>
-          Chores are scored by <strong>mental load</strong>, not by time — see the
-          Chore Cognitive Load Index in the project docs.
+          Location sharing is off until you turn it on, and only ever stores
+          your latest position — never a history of where you have been.
         </p>
       </section>
     </div>
