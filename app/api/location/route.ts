@@ -26,8 +26,18 @@ import { parseOwnTracksLocation } from "@/lib/owntracks";
  * is diagnosable instead of silently dropping fixes forever.
  */
 
-// OwnTracks reads commands from the response body; an empty array means "none".
-const ACK = Response.json([]);
+/**
+ * OwnTracks reads commands from the response body; an empty array means "none".
+ *
+ * Built fresh on every call, deliberately. A Response body is a single-use
+ * stream, so one shared module-scope instance serves an empty body from the
+ * second request onwards — which is precisely the malformed reply this endpoint
+ * exists to avoid, and would provoke the retry storm the docstring above warns
+ * about.
+ */
+function ack() {
+  return Response.json([]);
+}
 
 /** The password from an HTTP Basic header, or null when absent or malformed. */
 function basicAuthPassword(header: string | null): string | null {
@@ -70,17 +80,17 @@ export async function POST(request: Request) {
   }
 
   // Authenticated but not sharing: acknowledge and drop.
-  if (!member.sharing) return ACK;
+  if (!member.sharing) return ack();
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return ACK;
+    return ack();
   }
 
   const fix = parseOwnTracksLocation(body);
-  if (!fix) return ACK;
+  if (!fix) return ack();
 
   await getDb()
     .insert(userLocations)
@@ -108,5 +118,5 @@ export async function POST(request: Request) {
       setWhere: sql`${userLocations.capturedAt} < ${fix.capturedAt}`,
     });
 
-  return ACK;
+  return ack();
 }
