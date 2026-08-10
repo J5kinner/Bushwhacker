@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { MapPin, BatteryLow, Crosshair } from "lucide-react";
 import type { MemberLocation } from "@/lib/queries";
 import { setLocationSharing, recordMyLocation } from "./actions";
+import { LocationMap } from "./location-map";
 
 /** A coarse relative age: exact seconds are noise for "are they nearly home?". */
 function relativeAge(capturedAt: Date): string {
@@ -155,6 +156,8 @@ export function LocationView({
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
+
+      <LocationMap members={members} />
 
       {members.length === 0 ? (
         <p className="text-sm text-zinc-500">No household members yet.</p>
