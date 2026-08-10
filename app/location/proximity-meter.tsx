@@ -7,9 +7,19 @@ import {
   type MemberFix,
 } from "@/lib/proximity";
 
-/** The people on the track, and what they become once they reach each other. */
-const PERSON = "🧑";
-const EMBRACE = "🫂";
+/**
+ * The pair on the track, and what they become once they reach each other.
+ *
+ * Decorative and unmapped: neither figure stands for a particular member, since
+ * nothing in the data says who is who. The names live in the list above, and
+ * both figures are aria-hidden, so the meter never makes a claim about which of
+ * you is which.
+ *
+ * 💑 rather than 🫂 for the meeting: the hug emoji needs iOS 14.2 or Android 11,
+ * while this one has been in Unicode since 6.0 and renders on anything.
+ */
+const FIGURES = ["👩", "👨"] as const;
+const TOGETHER = "💑";
 
 /** A member's row reduced to a fix, or null when there is nothing to plot. */
 function toFix(member: MemberLocation): MemberFix | null {
@@ -57,9 +67,9 @@ export function ProximityMeter({ members }: { members: MemberLocation[] }) {
     return (
       <div className="rounded-lg border border-black/10 px-4 py-6 text-center dark:border-white/15">
         <p className="text-3xl leading-none opacity-40" aria-hidden>
-          {PERSON}
+          {FIGURES[0]}
           <span className="mx-3 text-base align-middle text-zinc-400">·····</span>
-          {PERSON}
+          {FIGURES[1]}
         </p>
         <p className="mt-3 text-sm text-zinc-500">
           Needs a position from both of you before it can measure anything.
@@ -107,7 +117,7 @@ export function ProximityMeter({ members }: { members: MemberLocation[] }) {
             aria-hidden
             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-3xl leading-none"
           >
-            {EMBRACE}
+            {TOGETHER}
           </p>
         ) : (
           <>
@@ -116,14 +126,14 @@ export function ProximityMeter({ members }: { members: MemberLocation[] }) {
               className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl leading-none transition-all duration-700 ease-out motion-reduce:transition-none"
               style={{ left: `${50 - spread}%` }}
             >
-              {PERSON}
+              {FIGURES[0]}
             </p>
             <p
               aria-hidden
               className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-2xl leading-none transition-all duration-700 ease-out motion-reduce:transition-none"
               style={{ left: `${50 + spread}%` }}
             >
-              {PERSON}
+              {FIGURES[1]}
             </p>
           </>
         )}
