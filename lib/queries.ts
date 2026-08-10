@@ -7,6 +7,8 @@ import {
   calendarEvents,
   chores,
   recipes,
+  users,
+  userLocations,
 } from "@/db/schema";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId } from "./household";
@@ -144,4 +146,51 @@ export async function getChores() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
   return fetchChores(householdId);
+}
+
+/**
+ * A household member and their latest position, if any. The position fields are
+ * null both for a member who has never shared and for one who has sharing
+ * turned off, which the page distinguishes using `sharing`.
+ */
+export interface MemberLocation {
+  userId: string;
+  name: string;
+  sharing: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  accuracyM: number | null;
+  batteryPct: number | null;
+  capturedAt: Date | null;
+}
+
+/**
+ * Every household member with their latest known position, name order.
+ *
+ * Deliberately NOT wrapped in unstable_cache, unlike every other read in this
+ * file. Two reasons: the writer is an external HTTP client rather than a Server
+ * Action, so the "mutate then bust the tag" pairing the others rely on does not
+ * apply; and a stale cache here shows a confidently wrong pin, which is a worse
+ * failure than a slightly old shopping list. The cost is two rows queried only
+ * while somebody has the map open.
+ */
+export async function getMemberLocations(): Promise<MemberLocation[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+
+  return getDb()
+    .select({
+      userId: users.id,
+      name: users.name,
+      sharing: users.locationSharing,
+      latitude: userLocations.latitude,
+      longitude: userLocations.longitude,
+      accuracyM: userLocations.accuracyM,
+      batteryPct: userLocations.batteryPct,
+      capturedAt: userLocations.capturedAt,
+    })
+    .from(users)
+    .leftJoin(userLocations, eq(userLocations.userId, users.id))
+    .where(eq(users.householdId, householdId))
+    .orderBy(asc(users.name));
 }
