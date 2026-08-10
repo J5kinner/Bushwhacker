@@ -6,7 +6,7 @@ import {
   ShoppingCart,
   BookOpen,
   CalendarDays,
-  ListChecks,
+  MapPin,
   Settings,
 } from "lucide-react";
 
@@ -14,7 +14,7 @@ const TABS = [
   { href: "/shopping", label: "Shopping", Icon: ShoppingCart },
   { href: "/recipes", label: "Recipes", Icon: BookOpen },
   { href: "/calendar", label: "Calendar", Icon: CalendarDays },
-  { href: "/chores", label: "Chores", Icon: ListChecks },
+  { href: "/location", label: "Location", Icon: MapPin },
   { href: "/settings", label: "Settings", Icon: Settings },
 ] as const;
 
