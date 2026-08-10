@@ -10,6 +10,7 @@ import {
   check,
   unique,
   jsonb,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -30,6 +31,22 @@ export const users = pgTable("users", {
     .references(() => households.id),
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
+
+  /**
+   * Whether this member's position may be stored and shown. Opt-in, and
+   * enforced server-side on ingest rather than on the phone: the sender is a
+   * third-party app that always publishes, so the gate has to live here to be
+   * meaningful. Flipping it off takes effect on the very next publish with no
+   * phone-side change.
+   */
+  locationSharing: boolean("location_sharing").notNull().default(false),
+  /**
+   * The shared secret OwnTracks authenticates with, as the HTTP Basic password.
+   * Null until the member generates one in Settings. Unique, so it identifies
+   * the member on its own.
+   */
+  locationToken: text("location_token").unique(),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -159,9 +176,38 @@ export const chores = pgTable(
   ],
 );
 
+/**
+ * The latest known position of each household member — one row per user,
+ * upserted. No history is kept: a trail of where your partner has been is a
+ * different and far more invasive feature than "where are they now", and not
+ * storing it means there is nothing to leak.
+ *
+ * `user_id` is the primary key, which makes one-row-per-user a schema
+ * guarantee and the write a plain upsert with no read-modify-write race.
+ */
+export const userLocations = pgTable("user_locations", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id),
+  householdId: uuid("household_id")
+    .notNull()
+    .references(() => households.id),
+  latitude: doublePrecision("latitude").notNull(),
+  longitude: doublePrecision("longitude").notNull(),
+  // Horizontal uncertainty in metres, as reported by the sender.
+  accuracyM: smallint("accuracy_m"),
+  // Sender battery percentage. Distinguishes "stopped sharing" from "phone died".
+  batteryPct: smallint("battery_pct"),
+  // When the fix was taken on the device, not when we received it — a queued
+  // publish can arrive minutes after the moment it describes.
+  capturedAt: timestamp("captured_at").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export type ShoppingItem = typeof shoppingItems.$inferSelect;
 export type Recipe = typeof recipes.$inferSelect;
 export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
+export type UserLocation = typeof userLocations.$inferSelect;
