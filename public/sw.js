@@ -1,8 +1,8 @@
 // Minimal HomeSync service worker: network-first with a cache fallback so the
 // installed PWA keeps working briefly offline. Intentionally simple — a fuller
 // caching strategy is a later enhancement.
-const CACHE = "homesync-v1";
-const SHELL = ["/shopping", "/calendar", "/chores", "/settings"];
+const CACHE = "homesync-v2";
+const SHELL = ["/shopping", "/location", "/calendar", "/settings"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
