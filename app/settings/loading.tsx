@@ -3,7 +3,7 @@ export default function SettingsLoading() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-      {["Account", "Status", "Shopping categories"].map((heading) => (
+      {["Account", "Appearance", "Status", "Shopping categories"].map((heading) => (
         <section key={heading}>
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
             {heading}

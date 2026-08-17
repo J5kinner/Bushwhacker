@@ -11,7 +11,8 @@ import {
   userLocations,
 } from "@/db/schema";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
-import { getHouseholdId } from "./household";
+import { getHouseholdId, getCurrentUserId } from "./household";
+import { isDbConfigured } from "@/db";
 
 /**
  * Read queries are cached server-side under a tag per domain, so navigations
@@ -193,4 +194,18 @@ export async function getMemberLocations(): Promise<MemberLocation[]> {
     .leftJoin(userLocations, eq(userLocations.userId, users.id))
     .where(eq(users.householdId, householdId))
     .orderBy(asc(users.name));
+}
+
+/** The signed-in member's dark-mode preference. Defaults to false if unset/signed out. */
+export async function getCurrentUserDarkMode(): Promise<boolean> {
+  if (!isDbConfigured()) return false;
+  const userId = await getCurrentUserId();
+  if (!userId) return false;
+
+  const [member] = await getDb()
+    .select({ darkMode: users.darkMode })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return member?.darkMode ?? false;
 }

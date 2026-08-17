@@ -3,23 +3,25 @@ import { eq } from "drizzle-orm";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { getDb, isDbConfigured } from "@/db";
 import { users } from "@/db/schema";
-import { getShoppingCategories } from "@/lib/queries";
+import { getShoppingCategories, getCurrentUserDarkMode } from "@/lib/queries";
 import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { SetupNotice } from "@/components/db-notice";
 import { CategoryManager } from "./category-manager";
 import { LocationSetup } from "./location-setup";
+import { ThemeToggle } from "./theme-toggle";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const [session, categories, setupIssue, userId, headerList] = await Promise.all([
+  const [session, categories, setupIssue, userId, headerList, darkMode] = await Promise.all([
     auth(),
     getShoppingCategories(),
     getSetupIssue(),
     getCurrentUserId(),
     headers(),
+    getCurrentUserDarkMode(),
   ]);
 
   // Read the deployment's own host so the endpoint shown is the one this phone
@@ -82,6 +84,16 @@ export default async function SettingsPage() {
         ) : (
           <p className="text-sm text-zinc-500">Not signed in.</p>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Appearance
+        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm">Dark mode</p>
+          <ThemeToggle initialDarkMode={darkMode} />
+        </div>
       </section>
 
       <section>
