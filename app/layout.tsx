@@ -40,7 +40,15 @@ export default async function RootLayout({
         {session ? (
           // Authenticated: full app shell with the bottom tab bar.
           <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
-            <main className="flex-1 px-4 pb-24 pt-6">{children}</main>
+            {/*
+              The bottom padding reserves exactly the band the fixed nav covers —
+              its 4rem height plus the home-indicator inset underneath it — so
+              page content can always scroll clear of the nav. A flat value would
+              come up short by the inset on an iPhone.
+            */}
+            <main className="flex-1 px-4 pb-[calc(4rem+env(safe-area-inset-bottom))] pt-6">
+              {children}
+            </main>
             <BottomNav />
             <LiveRefresh />
           </div>

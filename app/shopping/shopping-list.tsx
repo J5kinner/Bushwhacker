@@ -1,6 +1,6 @@
 "use client";
 
-import { useOptimistic, useRef, useState, useTransition } from "react";
+import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import { Plus, Trash2, ExternalLink } from "lucide-react";
 import type { ShoppingItem } from "@/db/schema";
 import { extractLink, displayDomain } from "@/lib/links";
@@ -19,6 +19,36 @@ type Action =
   | { type: "clear" };
 
 const OTHER = "Other";
+
+// Where the add-item bar rests when the keyboard is closed: clear of the fixed
+// bottom nav (4rem) and of the home-indicator inset beneath it. The same
+// expression pads the bottom of <main>, so the bar covers exactly its own
+// height of list beyond what the page already reserves.
+const BAR_RESTING_BOTTOM = "calc(4rem + env(safe-area-inset-bottom))";
+
+// Breathing room between the last item and the top of the add bar.
+const BAR_GAP = 8;
+
+/**
+ * The rendered height of an element in pixels, kept current as it grows and
+ * shrinks — an error message appearing, or larger system text. 0 until the
+ * first measurement lands, just after mount.
+ */
+function useElementHeight(ref: React.RefObject<HTMLElement | null>): number {
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // offsetHeight rather than the entry's contentRect: we want the border box,
+    // since the bar's padding and top border occlude the list too.
+    const observer = new ResizeObserver(() => setHeight(el.offsetHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return height;
+}
 
 function reduce(items: ShoppingItem[], action: Action): ShoppingItem[] {
   switch (action.type) {
@@ -72,6 +102,8 @@ export function ShoppingList({
   const [confirmClear, setConfirmClear] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keyboardInset = useKeyboardInset();
+  const barRef = useRef<HTMLDivElement>(null);
+  const barHeight = useElementHeight(barRef);
 
   function run(optimistic: Action, action: () => Promise<void>) {
     setError(null);
@@ -228,8 +260,25 @@ export function ShoppingList({
         </div>
       )}
 
-      {/* Spacer so the last item can scroll clear of the fixed add bar. */}
-      <div aria-hidden className="h-24" />
+      {/*
+        Spacer so every item — including the last one — can scroll clear of the
+        fixed add bar and stay tappable.
+
+        <main> already pads its bottom by the bar's resting offset (the nav band
+        plus the home-indicator inset), so beyond that the bar occludes exactly
+        its own height: a spacer of barHeight + a small gap is provably enough.
+
+        Measured rather than hard-coded, because the bar is not a fixed height —
+        it grows when an error message appears or the system text is larger, and
+        a guess that fits an Android phone leaves the last row unreachable on an
+        iPhone, where the inset is real. `h-36` covers the first paint, before
+        the measurement lands.
+      */}
+      <div
+        aria-hidden
+        className="h-36"
+        style={barHeight > 0 ? { height: barHeight + BAR_GAP } : undefined}
+      />
 
       {/*
         The add-item bar is pinned to the bottom of the screen, just above the
@@ -242,12 +291,10 @@ export function ShoppingList({
         the Add button, keeping everything within a narrow viewport.
       */}
       <div
+        ref={barRef}
         className="fixed inset-x-0 z-30 mx-auto w-full max-w-md border-t border-black/10 bg-background/95 px-4 py-3 backdrop-blur dark:border-white/10"
         style={{
-          bottom:
-            keyboardInset > 0
-              ? keyboardInset
-              : "calc(4rem + env(safe-area-inset-bottom))",
+          bottom: keyboardInset > 0 ? keyboardInset : BAR_RESTING_BOTTOM,
         }}
       >
         {error && (
