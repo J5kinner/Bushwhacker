@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { sql } from "drizzle-orm";
+import type { Session } from "next-auth";
 import { getDb, isDbConfigured } from "@/db";
 import { households, users } from "@/db/schema";
 import { auth } from "@/auth";
@@ -42,10 +43,15 @@ const knownUserIds = new Map<string, string>();
  * Null means "signed in, but no matching household member" — the account passed
  * the ALLOWED_EMAILS allowlist yet nobody seeded a row for it. Callers that need
  * an owner (chores) return early on null instead of throwing.
+ *
+ * Accepts an already-resolved session for callers that have already called
+ * `auth()` themselves, so the session isn't fetched twice in one request.
  */
-export async function getCurrentUserId(): Promise<string | null> {
-  const session = await auth();
-  const email = session?.user?.email?.toLowerCase();
+export async function getCurrentUserId(
+  session?: Session | null,
+): Promise<string | null> {
+  const resolvedSession = session !== undefined ? session : await auth();
+  const email = resolvedSession?.user?.email?.toLowerCase();
   if (!email) return null;
   const known = knownUserIds.get(email);
   if (known) return known;

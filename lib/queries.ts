@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { asc, desc, eq } from "drizzle-orm";
+import type { Session } from "next-auth";
 import { getDb } from "@/db";
 import {
   shoppingItems,
@@ -196,10 +197,16 @@ export async function getMemberLocations(): Promise<MemberLocation[]> {
     .orderBy(asc(users.name));
 }
 
-/** The signed-in member's dark-mode preference. Defaults to false if unset/signed out. */
-export async function getCurrentUserDarkMode(): Promise<boolean> {
+/**
+ * The signed-in member's dark-mode preference. Defaults to false if unset/signed out.
+ * Accepts an already-resolved session, so callers that already called `auth()`
+ * (e.g. the root layout) don't trigger a second session lookup.
+ */
+export async function getCurrentUserDarkMode(
+  session?: Session | null,
+): Promise<boolean> {
   if (!isDbConfigured()) return false;
-  const userId = await getCurrentUserId();
+  const userId = await getCurrentUserId(session);
   if (!userId) return false;
 
   const [member] = await getDb()

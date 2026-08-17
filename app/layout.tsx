@@ -30,7 +30,8 @@ export const viewport: Viewport = {
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const [session, darkMode] = await Promise.all([auth(), getCurrentUserDarkMode()]);
+  const session = await auth();
+  const darkMode = await getCurrentUserDarkMode(session);
 
   return (
     <html

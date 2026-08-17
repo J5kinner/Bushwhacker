@@ -15,21 +15,34 @@ function applyDarkClass(enabled: boolean) {
 
 export function ThemeToggle({ initialDarkMode }: { initialDarkMode: boolean }) {
   const [enabled, setEnabled] = useState(initialDarkMode);
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   function toggle(next: boolean) {
+    setError(null);
     setEnabled(next);
     applyDarkClass(next);
     startTransition(async () => {
-      await setDarkMode(next);
+      try {
+        const saved = await setDarkMode(next);
+        if (!saved) throw new Error("not saved");
+      } catch {
+        setEnabled(!next);
+        applyDarkClass(!next);
+        setError("Could not save — check the household setup above.");
+      }
     });
   }
 
   return (
-    <Switch
-      checked={enabled}
-      onCheckedChange={toggle}
-      aria-label="Dark mode"
-    />
+    <div className="flex flex-col items-end gap-1">
+      <Switch
+        checked={enabled}
+        onCheckedChange={toggle}
+        disabled={pending}
+        aria-label="Dark mode"
+      />
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
   );
 }

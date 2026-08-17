@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { getDb, isDbConfigured } from "@/db";
 import { users } from "@/db/schema";
-import { getShoppingCategories, getCurrentUserDarkMode } from "@/lib/queries";
+import { getShoppingCategories } from "@/lib/queries";
 import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,12 @@ import { ThemeToggle } from "./theme-toggle";
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const [session, categories, setupIssue, userId, headerList, darkMode] = await Promise.all([
+  const [session, categories, setupIssue, userId, headerList] = await Promise.all([
     auth(),
     getShoppingCategories(),
     getSetupIssue(),
     getCurrentUserId(),
     headers(),
-    getCurrentUserDarkMode(),
   ]);
 
   // Read the deployment's own host so the endpoint shown is the one this phone
@@ -33,13 +32,15 @@ export default async function SettingsPage() {
   const endpoint = `${protocol}://${host}/api/location`;
 
   let locationToken: string | null = null;
+  let darkMode = false;
   if (userId && isDbConfigured()) {
     const [member] = await getDb()
-      .select({ token: users.locationToken })
+      .select({ token: users.locationToken, darkMode: users.darkMode })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
     locationToken = member?.token ?? null;
+    darkMode = member?.darkMode ?? false;
   }
 
   return (
