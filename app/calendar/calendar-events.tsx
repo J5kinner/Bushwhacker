@@ -139,6 +139,20 @@ export function CalendarEvents({
     });
   }
 
+  // The shared `error` banner would otherwise leak across contexts — an
+  // add-form error still showing when the sheet opens, or a sheet error
+  // still showing under the list after it closes — so both open and close
+  // clear it explicitly rather than relying on the next `run()` call to.
+  function openEventSheet(event: CalendarEvent) {
+    setError(null);
+    setEditingEvent(event);
+  }
+
+  function closeEventSheet() {
+    setError(null);
+    setEditingEvent(null);
+  }
+
   function onAdd(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = title.trim();
@@ -368,16 +382,18 @@ export function CalendarEvents({
                   The row itself opens the edit sheet (delete now lives there,
                   behind a confirm — a bare trash icon here was too easy to
                   mis-tap). The link stays independently tappable by stopping
-                  its click from bubbling to this handler.
+                  both its click and its keydown (Enter) from bubbling to this
+                  handler — otherwise Enter on the link would open the sheet
+                  instead of following it.
                 */}
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={() => setEditingEvent(event)}
+                  onClick={() => openEventSheet(event)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setEditingEvent(event);
+                      openEventSheet(event);
                     }
                   }}
                   className="min-w-0 flex-1 cursor-pointer text-left"
@@ -394,6 +410,7 @@ export function CalendarEvents({
                       rel="noopener"
                       aria-label={`Open link for ${event.title}`}
                       onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
                       className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:underline"
                     >
                       <ExternalLink className="size-3 shrink-0" aria-hidden />
@@ -412,7 +429,7 @@ export function CalendarEvents({
           event={editingEvent}
           members={members}
           error={error}
-          onClose={() => setEditingEvent(null)}
+          onClose={closeEventSheet}
           onSave={(optimisticEvent, input, expectedUpdatedAt) => {
             run({ type: "edit", event: optimisticEvent }, async () => {
               const result = await updateCalendarEvent(
@@ -424,15 +441,29 @@ export function CalendarEvents({
                 return { error: "This event was just changed — reload." };
               }
               if (result.error) return { error: result.error };
-              setEditingEvent(null);
+              closeEventSheet();
               return {};
             });
           }}
           onTogglePinned={(id, pinned) => {
-            run({ type: "pin", id, pinned }, () => togglePinned(id, pinned));
+            run({ type: "pin", id, pinned }, async () => {
+              // togglePinned's own update also bumps updated_at (Drizzle's
+              // $onUpdate fires on every update to the row, not just this
+              // one's `pinned` column), so the sheet's snapshot needs the
+              // fresh value or its next Save would send a now-stale
+              // expectedUpdatedAt and always trip the last-write-wins guard.
+              const result = await togglePinned(id, pinned);
+              if (result) {
+                setEditingEvent((prev) =>
+                  prev && prev.id === id
+                    ? { ...prev, pinned, updatedAt: result.updatedAt }
+                    : prev,
+                );
+              }
+            });
           }}
           onDelete={(id) => {
-            setEditingEvent(null);
+            closeEventSheet();
             run({ type: "delete", id }, () => deleteCalendarEvent(id));
           }}
         />

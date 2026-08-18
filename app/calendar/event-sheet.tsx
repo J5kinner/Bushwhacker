@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pin, PinOff, Trash2, X } from "lucide-react";
 import type { CalendarEvent } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
@@ -75,6 +75,51 @@ export function EventSheet({
   const [notes, setNotes] = useState(event.notes ?? "");
   const [pinned, setPinned] = useState(event.pinned);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const confirmDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // A background page scrolling behind an open sheet reads as broken on a
+  // phone, where the sheet already covers most of the viewport.
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  // aria-modal="true" promises focus stays inside the dialog while it's
+  // open; move it in once on open (the heading, not a form field, so
+  // opening the sheet doesn't pop the on-screen keyboard). Deliberately
+  // `[]` rather than depending on anything from props/state — this must
+  // run exactly once, not every time the 15s LiveRefresh poll (or a pin
+  // toggle refreshing the parent's snapshot) re-renders the parent and
+  // hands this component a new `onClose` reference, or focus would keep
+  // jumping back to the heading out from under whatever the user is typing.
+  // A full focus trap (Tab wrapping around the sheet instead of escaping to
+  // the page behind it) is deferred — later PRs copying this modal pattern
+  // (repeat options, comments, reminders, attachments) should add one then
+  // rather than each reinventing it here.
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
+  // Escape closes the sheet, matching the X/backdrop.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    return () => {
+      if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current);
+    };
+  }, []);
 
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -98,19 +143,33 @@ export function EventSheet({
       attendeeIds,
       notes: notes.trim() || null,
     };
+    // `pinned` comes from state, not the `event` snapshot: a pin toggle
+    // earlier in this sheet session already moved it ahead of the snapshot,
+    // and spreading the stale snapshot's value here would visually revert
+    // the pin the moment this optimistic row lands.
     const optimisticEvent: CalendarEvent = {
       ...event,
       ...fields,
+      pinned,
       updatedAt: new Date(),
     };
     onSave(optimisticEvent, fields, event.updatedAt);
   }
 
+  // Two-tap delete: the first tap arms a confirm state that disarms itself
+  // after a beat, so a stray thumb can't delete the event in one go — same
+  // pattern as the shopping list's "Clear bought" confirm.
   function handleDeleteTap() {
+    if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current);
     if (!confirmingDelete) {
       setConfirmingDelete(true);
+      confirmDeleteTimer.current = setTimeout(
+        () => setConfirmingDelete(false),
+        4000,
+      );
       return;
     }
+    setConfirmingDelete(false);
     onDelete(event.id);
   }
 
@@ -138,7 +197,13 @@ export function EventSheet({
         }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-black/10 px-4 py-3 dark:border-white/15">
-          <h2 className="text-base font-semibold">Edit event</h2>
+          <h2
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-base font-semibold outline-none"
+          >
+            Edit event
+          </h2>
           <button
             type="button"
             onClick={onClose}

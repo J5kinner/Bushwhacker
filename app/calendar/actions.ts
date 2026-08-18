@@ -187,10 +187,24 @@ export async function deleteCalendarEvent(id: string) {
   updateTag(CACHE_TAGS.calendarEvents);
 }
 
-export async function togglePinned(id: string, pinned: boolean) {
+/**
+ * Toggles pinned and hands back the row's fresh `updatedAt`, the same way
+ * `updateCalendarEvent` hands back a conflict flag: Drizzle's `$onUpdate`
+ * bumps `updatedAt` on *every* update, this one included, so a caller sitting
+ * on an older snapshot — the edit sheet, which loads the event once at open
+ * time — needs the new value to refresh that snapshot with. Skipping this
+ * would leave the sheet holding a now-stale `updatedAt`, so its next save
+ * would always trip `updateCalendarEvent`'s last-write-wins guard even
+ * though nobody else touched the row. Null means nothing matched (no
+ * household, or the event isn't this household's).
+ */
+export async function togglePinned(
+  id: string,
+  pinned: boolean,
+): Promise<{ updatedAt: Date } | null> {
   const householdId = await getHouseholdId();
-  if (!householdId) return;
-  await getDb()
+  if (!householdId) return null;
+  const [updated] = await getDb()
     .update(calendarEvents)
     .set({ pinned })
     .where(
@@ -198,6 +212,8 @@ export async function togglePinned(id: string, pinned: boolean) {
         eq(calendarEvents.id, id),
         eq(calendarEvents.householdId, householdId),
       ),
-    );
+    )
+    .returning({ updatedAt: calendarEvents.updatedAt });
   updateTag(CACHE_TAGS.calendarEvents);
+  return updated ? { updatedAt: updated.updatedAt } : null;
 }
