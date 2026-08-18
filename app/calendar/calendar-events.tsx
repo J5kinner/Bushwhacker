@@ -2,17 +2,25 @@
 
 import { useOptimistic, useState, useTransition } from "react";
 import { format } from "date-fns";
-import { Plus, Trash2, ExternalLink } from "lucide-react";
+import { Plus, ExternalLink } from "lucide-react";
 import type { CalendarEvent } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS, eventColourHex } from "@/lib/event-colours";
 import { displayDomain } from "@/lib/links";
 import type { HouseholdMember } from "@/lib/queries";
-import { addCalendarEvent, deleteCalendarEvent } from "./actions";
+import {
+  addCalendarEvent,
+  deleteCalendarEvent,
+  updateCalendarEvent,
+  togglePinned,
+} from "./actions";
+import { EventSheet } from "./event-sheet";
 
 type Action =
   | { type: "add"; event: CalendarEvent }
-  | { type: "delete"; id: string };
+  | { type: "edit"; event: CalendarEvent }
+  | { type: "delete"; id: string }
+  | { type: "pin"; id: string; pinned: boolean };
 
 function reduce(events: CalendarEvent[], action: Action): CalendarEvent[] {
   switch (action.type) {
@@ -20,8 +28,16 @@ function reduce(events: CalendarEvent[], action: Action): CalendarEvent[] {
       return [...events, action.event].sort((a, b) =>
         a.startDate.localeCompare(b.startDate),
       );
+    case "edit":
+      return events
+        .map((e) => (e.id === action.event.id ? action.event : e))
+        .sort((a, b) => a.startDate.localeCompare(b.startDate));
     case "delete":
       return events.filter((e) => e.id !== action.id);
+    case "pin":
+      return events.map((e) =>
+        e.id === action.id ? { ...e, pinned: action.pinned } : e,
+      );
   }
 }
 
@@ -66,6 +82,8 @@ function attendeeInitials(
   return initials.length > 0 ? initials.join("") : null;
 }
 
+// Duplicated (not exported) in event-sheet.tsx, which mirrors this add
+// form's styling for its own edit form — keep both in sync by eye.
 const inputClass =
   "rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15";
 
@@ -87,6 +105,11 @@ export function CalendarEvents({
   const [optimistic, dispatch] = useOptimistic(initialEvents, reduce);
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // The event whose sheet is open, snapshotted at tap time — the sheet's form
+  // and its last-write-wins `expectedUpdatedAt` both come from this snapshot,
+  // not from `optimistic`, so a background change to the row while the sheet
+  // is open can't silently rewrite fields the user is mid-edit on.
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -114,6 +137,20 @@ export function CalendarEvents({
         setError(e instanceof Error ? e.message : "Something went wrong.");
       }
     });
+  }
+
+  // The shared `error` banner would otherwise leak across contexts — an
+  // add-form error still showing when the sheet opens, or a sheet error
+  // still showing under the list after it closes — so both open and close
+  // clear it explicitly rather than relying on the next `run()` call to.
+  function openEventSheet(event: CalendarEvent) {
+    setError(null);
+    setEditingEvent(event);
+  }
+
+  function closeEventSheet() {
+    setError(null);
+    setEditingEvent(null);
   }
 
   function onAdd(e: React.FormEvent) {
@@ -341,7 +378,26 @@ export function CalendarEvents({
                   style={colourHex ? { backgroundColor: colourHex } : undefined}
                   aria-hidden
                 />
-                <div className="min-w-0 flex-1">
+                {/*
+                  The row itself opens the edit sheet (delete now lives there,
+                  behind a confirm — a bare trash icon here was too easy to
+                  mis-tap). The link stays independently tappable by stopping
+                  both its click and its keydown (Enter) from bubbling to this
+                  handler — otherwise Enter on the link would open the sheet
+                  instead of following it.
+                */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openEventSheet(event)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openEventSheet(event);
+                    }
+                  }}
+                  className="min-w-0 flex-1 cursor-pointer text-left"
+                >
                   <p className="text-base">{event.title}</p>
                   <p className="text-xs text-zinc-500">{summary}</p>
                   {event.location && (
@@ -353,6 +409,8 @@ export function CalendarEvents({
                       target="_blank"
                       rel="noopener"
                       aria-label={`Open link for ${event.title}`}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
                       className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:underline"
                     >
                       <ExternalLink className="size-3 shrink-0" aria-hidden />
@@ -360,21 +418,55 @@ export function CalendarEvents({
                     </a>
                   )}
                 </div>
-                <button
-                  onClick={() =>
-                    run({ type: "delete", id: event.id }, () =>
-                      deleteCalendarEvent(event.id),
-                    )
-                  }
-                  className="text-zinc-400 hover:text-red-500"
-                  aria-label={`Delete ${event.title}`}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                </button>
               </li>
             );
           })}
         </ul>
+      )}
+
+      {editingEvent && (
+        <EventSheet
+          event={editingEvent}
+          members={members}
+          error={error}
+          onClose={closeEventSheet}
+          onSave={(optimisticEvent, input, expectedUpdatedAt) => {
+            run({ type: "edit", event: optimisticEvent }, async () => {
+              const result = await updateCalendarEvent(
+                optimisticEvent.id,
+                input,
+                expectedUpdatedAt,
+              );
+              if (result.conflict) {
+                return { error: "This event was just changed — reload." };
+              }
+              if (result.error) return { error: result.error };
+              closeEventSheet();
+              return {};
+            });
+          }}
+          onTogglePinned={(id, pinned) => {
+            run({ type: "pin", id, pinned }, async () => {
+              // togglePinned's own update also bumps updated_at (Drizzle's
+              // $onUpdate fires on every update to the row, not just this
+              // one's `pinned` column), so the sheet's snapshot needs the
+              // fresh value or its next Save would send a now-stale
+              // expectedUpdatedAt and always trip the last-write-wins guard.
+              const result = await togglePinned(id, pinned);
+              if (result) {
+                setEditingEvent((prev) =>
+                  prev && prev.id === id
+                    ? { ...prev, pinned, updatedAt: result.updatedAt }
+                    : prev,
+                );
+              }
+            });
+          }}
+          onDelete={(id) => {
+            closeEventSheet();
+            run({ type: "delete", id }, () => deleteCalendarEvent(id));
+          }}
+        />
       )}
     </div>
   );
