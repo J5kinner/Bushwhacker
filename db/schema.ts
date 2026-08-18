@@ -11,6 +11,7 @@ import {
   check,
   unique,
   index,
+  uniqueIndex,
   jsonb,
   doublePrecision,
   primaryKey,
@@ -191,6 +192,29 @@ export const calendarEvents = pgTable(
   },
   (t) => [
     index("calendar_events_household_start_idx").on(t.householdId, t.startDate),
+    // Partial — only override rows carry a seriesId — so two concurrent
+    // "edit this occurrence" calls for the same master/date collide on this
+    // index instead of both inserting: editOccurrence's onConflictDoUpdate
+    // targets exactly (seriesId, originalDate) under this same predicate, so
+    // the second edit replaces the first override rather than duplicating
+    // the occurrence.
+    uniqueIndex("calendar_events_series_original_uq")
+      .on(t.seriesId, t.originalDate)
+      .where(sql`${t.seriesId} is not null`),
+    // No DB CHECK constrains repeatFreq's *enum* beyond this — Drizzle's
+    // `{ enum: [...] }` is TypeScript-only — so a stray "biweekly" from a
+    // future/buggy caller is rejected at the column level, not just by the
+    // server action's own validation (which lib/recurrence.ts's own tests
+    // already assume can't be trusted: an unrecognised value there expands
+    // to nothing, deliberately fail-closed).
+    check(
+      "calendar_events_repeat_freq_valid",
+      sql`${t.repeatFreq} is null or ${t.repeatFreq} in ('daily', 'weekly', 'monthly', 'yearly')`,
+    ),
+    // Mirrors the action layer's own 1..99 clamp (app/calendar/actions.ts) —
+    // same reasoning as the chores table's range checks above: the DB is the
+    // backstop for a write that ever bypasses the Server Action.
+    check("calendar_events_repeat_interval_range", sql`${t.repeatInterval} between 1 and 99`),
   ],
 );
 

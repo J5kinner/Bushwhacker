@@ -112,6 +112,12 @@ export function EventSheet({
   const [title, setTitle] = useState(event.title);
   const [startDate, setStartDate] = useState(occurrence.date);
   const [endDate, setEndDate] = useState(occurrence.endDate ?? "");
+  // Only flipped by the date inputs' own onChange (below), never by
+  // anything else that happens to touch startDate/endDate state — see
+  // handleSave, which uses this to tell a deliberate whole-series
+  // reschedule apart from the form simply having been pre-filled from the
+  // tapped occurrence's date.
+  const [dateTouched, setDateTouched] = useState(false);
   const [allDay, setAllDay] = useState(!event.startTime);
   const [startTime, setStartTime] = useState(event.startTime ?? "");
   const [endTime, setEndTime] = useState(event.endTime ?? "");
@@ -209,23 +215,40 @@ export function EventSheet({
    * toggle earlier in this sheet session already moved it ahead of the
    * snapshot, and spreading the stale snapshot's value here would visually
    * revert the pin the moment this optimistic row lands.
+   *
+   * BLOCKER fix: the date fields are pre-filled from the tapped OCCURRENCE's
+   * date, not the master's own series-start date (see the class doc
+   * comment) — necessary so "this only" opens showing the right day, but
+   * dangerous for "whole series", which writes straight to the master row
+   * that `expandOccurrences` generates every occurrence from. Opening
+   * occurrence #5 of a weekly series, editing only the title, and saving
+   * "whole series" would otherwise silently move the master's startDate to
+   * occurrence #5's date — occurrences 1-4 are before that date and vanish
+   * from expansion forever, with nothing in the UI suggesting a reschedule
+   * happened. `dateTouched` (set only by the date inputs' own onChange)
+   * tells an accidental carry-over apart from someone deliberately typing a
+   * new date to reschedule the whole series, which stays fully possible.
    */
   function handleSave(e: React.FormEvent) {
     e.preventDefault();
     const fields = collectFields();
     if (!fields) return;
+    const resolvedFields =
+      isMaster && !dateTouched
+        ? { ...fields, startDate: event.startDate, endDate: event.endDate }
+        : fields;
     const optimisticEvent: CalendarEvent = {
       ...event,
-      ...fields,
+      ...resolvedFields,
       // CalendarEventInput allows `repeatInterval: null` for callers that
       // don't care; the schema column is not-null, so the optimistic row
       // (typed against the real CalendarEvent) needs the same 1 fallback
       // the server's normaliser applies.
-      repeatInterval: fields.repeatInterval ?? 1,
+      repeatInterval: resolvedFields.repeatInterval ?? 1,
       pinned,
       updatedAt: new Date(),
     };
-    onSave(optimisticEvent, fields, event.updatedAt);
+    onSave(optimisticEvent, resolvedFields, event.updatedAt);
   }
 
   /**
@@ -288,6 +311,13 @@ export function EventSheet({
     else onDelete(event.id);
   }
 
+  // Whichever startDate handleSave will actually send: the master's own
+  // (untouched master) or the form's own (a touched master, an override, or
+  // a plain event) — see handleSave's BLOCKER comment. The "Until" field
+  // validates against exactly that date server-side, so its min must match
+  // or a valid-looking value here could still fail to save.
+  const repeatUntilMin = isMaster && !dateTouched ? event.startDate : startDate;
+
   return (
     <div className="fixed inset-0 z-40">
       {/* Backdrop — tapping outside the sheet closes it, same as the X. */}
@@ -348,7 +378,10 @@ export function EventSheet({
               <input
                 type="date"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setDateTouched(true);
+                }}
                 className={`mt-1 w-full ${inputClass}`}
                 aria-label="Start date"
               />
@@ -358,7 +391,10 @@ export function EventSheet({
               <input
                 type="date"
                 value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setDateTouched(true);
+                }}
                 className={`mt-1 w-full ${inputClass}`}
                 aria-label="End date"
               />
@@ -574,7 +610,7 @@ export function EventSheet({
                       type="date"
                       value={repeatUntil}
                       onChange={(e) => setRepeatUntil(e.target.value)}
-                      min={startDate || undefined}
+                      min={repeatUntilMin || undefined}
                       className={`mt-1 w-full ${inputClass}`}
                       aria-label="Repeat until"
                     />

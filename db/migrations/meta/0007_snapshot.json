@@ -1,5 +1,5 @@
 {
-  "id": "81dbf6ce-6cd9-4738-b22d-1f0a461dfac5",
+  "id": "8a222a1d-d038-4673-85eb-55245a98fc5d",
   "prevId": "92c5c4c3-2f7f-4fd5-a754-483fa0109a74",
   "version": "7",
   "dialect": "postgresql",
@@ -167,6 +167,28 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "calendar_events_series_original_uq": {
+          "name": "calendar_events_series_original_uq",
+          "columns": [
+            {
+              "expression": "series_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "original_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"calendar_events\".\"series_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -213,7 +235,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "calendar_events_repeat_freq_valid": {
+          "name": "calendar_events_repeat_freq_valid",
+          "value": "\"calendar_events\".\"repeat_freq\" is null or \"calendar_events\".\"repeat_freq\" in ('daily', 'weekly', 'monthly', 'yearly')"
+        },
+        "calendar_events_repeat_interval_range": {
+          "name": "calendar_events_repeat_interval_range",
+          "value": "\"calendar_events\".\"repeat_interval\" between 1 and 99"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.chores": {

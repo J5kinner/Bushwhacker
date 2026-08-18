@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { getDb } from "@/db";
 import { calendarEvents, eventExdates } from "@/db/schema";
@@ -207,6 +207,16 @@ export async function addCalendarEvent(
  * changing the master's fields (including its repeat* columns) is the entire
  * operation. Editing a single occurrence instead goes through
  * `editOccurrence`, which never calls this function.
+ *
+ * Called against an override row (`seriesId` set), the repeat* fields in
+ * `input` are always discarded: an override is standalone by construction
+ * (it already overrides one occurrence of another series), so letting it
+ * pick up its own `repeatFreq` would layer a second, unrelated recurrence on
+ * top of the one it belongs to — a case `expandOccurrences` was never built
+ * to represent. The sheet already never sends repeat fields for an override
+ * edit, but this reads the row's own `seriesId` and enforces it server-side
+ * too, in the same query that would otherwise be a second household-scoped
+ * lookup.
  */
 export async function updateCalendarEvent(
   id: string,
@@ -218,9 +228,18 @@ export async function updateCalendarEvent(
   const result = await normaliseEventInput(input);
   if (!result.ok) return { conflict: false, error: result.reason };
 
+  const [target] = await getDb()
+    .select({ seriesId: calendarEvents.seriesId })
+    .from(calendarEvents)
+    .where(and(eq(calendarEvents.id, id), eq(calendarEvents.householdId, householdId)))
+    .limit(1);
+  const fields = target?.seriesId
+    ? { ...result.fields, repeatFreq: null, repeatInterval: 1, repeatWeekdays: null, repeatUntil: null }
+    : result.fields;
+
   const updated = await getDb()
     .update(calendarEvents)
-    .set(result.fields)
+    .set(fields)
     .where(
       and(
         eq(calendarEvents.id, id),
@@ -279,12 +298,27 @@ export async function togglePinned(
   return updated ? { updatedAt: updated.updatedAt } : null;
 }
 
-/** The master row a household owns, or null if it doesn't (wrong household or unknown id). */
+/**
+ * The recurring master a household owns, or null if it doesn't — wrong
+ * household, unknown id, or (deliberately) a plain event/override with no
+ * `repeatFreq`. Occurrence-level actions (delete/edit-this-occurrence) only
+ * make sense against an actual master; without this check, a caller could
+ * point `deleteOccurrence`/`editOccurrence` at a plain event's own id or at
+ * an override row and either suppress it outright (no exdate applies to a
+ * non-recurring row) or spawn an override-of-an-override, neither of which
+ * `expandOccurrences` is built to represent.
+ */
 async function findOwnedMaster(householdId: string, eventId: string) {
   const [master] = await getDb()
     .select({ id: calendarEvents.id })
     .from(calendarEvents)
-    .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.householdId, householdId)))
+    .where(
+      and(
+        eq(calendarEvents.id, eventId),
+        eq(calendarEvents.householdId, householdId),
+        isNotNull(calendarEvents.repeatFreq),
+      ),
+    )
     .limit(1);
   return master ?? null;
 }
@@ -312,24 +346,33 @@ export async function deleteOccurrence(eventId: string, date: string): Promise<v
 /**
  * Edits one occurrence of a recurring master ("this event only" save)
  * without touching the master: it adds an exdate for the original date AND
- * inserts a standalone override row — a plain, non-recurring event carrying
+ * upserts a standalone override row — a plain, non-recurring event carrying
  * `seriesId` (the master) and `originalDate` (the date it replaces). All
  * repeat* fields on the override are forced null regardless of what `input`
  * carries, because an override is never itself a series — the master keeps
  * its own recurrence untouched, and the sheet hides/ignores the repeat
  * controls in this mode anyway.
  *
- * No transaction wraps the two inserts: the neon-http driver Drizzle is
- * configured with here has no session/transaction support at all —
- * `getDb().transaction()` throws "No transactions support in neon-http
- * driver" unconditionally — so this is two sequential, best-effort-atomic
- * writes rather than one atomic unit. The exdate goes first deliberately.
- * If a crash or dropped connection lands the exdate but not the override,
- * the occurrence just goes missing from the agenda — annoying, but visible
- * and fixable by reopening the master and editing that date again. If the
- * order were reversed and only the override landed, the master would carry
- * on generating its own occurrence on that date too, so the event would
- * silently DOUBLE — a worse and much less obvious failure to notice or undo.
+ * The override write is an upsert (`onConflictDoUpdate` against the partial
+ * unique index on `(seriesId, originalDate)`, db/schema.ts), not a plain
+ * insert: two concurrent "edit this occurrence" calls for the same
+ * master/date would otherwise both insert, producing two override rows (and
+ * `expandOccurrences` would render the occurrence twice) instead of the
+ * second edit replacing the first, which is what a household of two tapping
+ * the same event at once would expect.
+ *
+ * No transaction wraps the exdate insert and the override upsert: the
+ * neon-http driver Drizzle is configured with here has no session/
+ * transaction support at all — `getDb().transaction()` throws "No
+ * transactions support in neon-http driver" unconditionally — so these are
+ * two sequential, best-effort-atomic writes rather than one atomic unit. The
+ * exdate goes first deliberately, and the catch block below recovers if the
+ * second write then fails: a stray exdate with no override would otherwise
+ * hide the occurrence outright with nothing to show for it, whereas a stray
+ * override with no exdate would leave the master generating a duplicate
+ * occurrence on that date — the harder failure to notice and undo. Catching
+ * the override write's failure and deleting the exdate it depended on
+ * collapses back to "nothing happened" instead of either broken state.
  */
 export async function editOccurrence(
   eventId: string,
@@ -344,21 +387,49 @@ export async function editOccurrence(
   if (!result.ok) return { error: result.reason };
   const createdById = await getCurrentUserId();
 
+  const overrideFields = {
+    ...result.fields,
+    repeatFreq: null,
+    repeatInterval: 1,
+    repeatWeekdays: null,
+    repeatUntil: null,
+  };
+
   await getDb().insert(eventExdates).values({ eventId, date }).onConflictDoNothing();
 
-  await getDb()
-    .insert(calendarEvents)
-    .values({
-      ...result.fields,
-      repeatFreq: null,
-      repeatInterval: 1,
-      repeatWeekdays: null,
-      repeatUntil: null,
-      householdId,
-      createdById,
-      seriesId: eventId,
-      originalDate: date,
-    });
+  try {
+    await getDb()
+      .insert(calendarEvents)
+      .values({
+        ...overrideFields,
+        householdId,
+        createdById,
+        seriesId: eventId,
+        originalDate: date,
+      })
+      .onConflictDoUpdate({
+        target: [calendarEvents.seriesId, calendarEvents.originalDate],
+        targetWhere: sql`${calendarEvents.seriesId} is not null`,
+        // Only the editable fields — householdId/seriesId/originalDate say
+        // WHICH override this is, not what it says, and stay put when a
+        // second concurrent edit replaces the first.
+        set: { ...overrideFields, updatedAt: new Date() },
+      });
+  } catch {
+    // Best-effort cleanup: the exdate above already committed as its own
+    // statement (this driver has no transactions to roll back), so a failed
+    // override write would otherwise leave the occurrence suppressed with no
+    // override in its place — worse than before this call ran. If this
+    // delete itself fails there's nothing further to do; a retry is safe
+    // either way (onConflictDoNothing on the exdate, onConflictDoUpdate on
+    // the override).
+    await getDb()
+      .delete(eventExdates)
+      .where(and(eq(eventExdates.eventId, eventId), eq(eventExdates.date, date)))
+      .catch(() => {});
+    updateTag(CACHE_TAGS.calendarEvents);
+    return { error: "Could not save your changes — please try again." };
+  }
 
   updateTag(CACHE_TAGS.calendarEvents);
   return {};
