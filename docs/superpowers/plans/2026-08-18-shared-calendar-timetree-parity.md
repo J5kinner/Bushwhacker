@@ -128,15 +128,15 @@ Every PR now forecasts medium or lower; the ~0.55s name their dominant channels 
 | --- | --- | --- | --- |
 | 1a | Schema M1 + hardened actions (add/update/delete scoped by household, `togglePinned`, validation) + plain form gains time/location/url/colour/attendee fields + date-fns + ADR 0005 | M1 | ~0.55 medium (Ŝ, V̂) |
 | 1b | Event detail/edit sheet + optimistic edit path (reducer `edit` case) + delete confirm | — | ~0.45 medium (Ĉ) |
-| 3 | `lib/recurrence.ts` + tests + frozen `Occurrence` contract + ADR 0006 | — | ~0.35 medium (Ĉ, contained) |
+| 3 | `lib/recurrence.ts` + tests + frozen `Occurrence` contract + ADR 0007 | — | ~0.35 medium (Ĉ, contained) |
 | 2a | Windowed read (`getCalendarWindow`) + agenda regroup (day groups, client-side today, pinned section, bounded past) + view-switcher shell + `?m=` navigation | — | ~0.50 medium (D̂) |
 | 2b | Month grid (week-row spanning bars, 3-pill cap + "+n") + tap-day sheet | — | ~0.55 medium (Ĉ) |
 | 4 | Recurrence wiring: M2 + repeat options in edit sheet + this-vs-series flows + exdate/override/series actions | M2 | ~0.55 medium (Ĉ, V̂) |
 | 5 | 3-day vertical time-grid view (consumes `Occurrence[]`, midnight clamping, overlap columns) | — | ~0.45 medium (Ĉ) |
 | 6 | ~~Multiple calendars~~ — deferred per wave 0 | — | — |
-| 7 | Comments + activity: M4 + comments section in event sheet + activity writes added to existing actions + feed sheet + unread badge + mark-seen + ADR 0009 | M4 | ~0.55 medium (D̂ — watch it) |
-| 8 | Reminders + push: M5 + web-push/VAPID + sender route + sw.js push/notificationclick + Settings enable-notifications + partner-activity push + reminder picker + ADR 0007 | M5 | ~0.55 medium (V̂, platform) |
-| 9 | Attachments: M6 + Blob client upload + event-sheet section + ADR 0008 | M6 | ~0.45 medium |
+| 7 | Comments + activity: M4 + comments section in event sheet + activity writes added to existing actions + feed sheet + unread badge + mark-seen + ADR 0008 | M4 | ~0.55 medium (D̂ — watch it) |
+| 8 | Reminders + push: M5 + web-push/VAPID + sender route + sw.js push/notificationclick + Settings enable-notifications + partner-activity push + reminder picker + ADR 0009 | M5 | ~0.55 medium (V̂, platform) |
+| 9 | Attachments: M6 + Blob client upload + event-sheet section + ADR 0010 | M6 | ~0.45 medium |
 | 10 | Tokened `/api/calendar.ics` feed route (confirmed in wave 0) | — | ~0.30 low |
 
 ## Waves (Sonnet builders in isolated worktrees)
