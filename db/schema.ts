@@ -6,9 +6,11 @@ import {
   boolean,
   smallint,
   date,
+  time,
   timestamp,
   check,
   unique,
+  index,
   jsonb,
   doublePrecision,
 } from "drizzle-orm/pg-core";
@@ -113,19 +115,50 @@ export const recipes = pgTable(
   (t) => [unique("recipes_household_url").on(t.householdId, t.url)],
 );
 
-export const calendarEvents = pgTable("calendar_events", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  householdId: uuid("household_id")
-    .notNull()
-    .references(() => households.id),
-  title: text("title").notNull(),
-  // endDate is nullable; a single-day event has startDate only, a trip has both.
-  startDate: date("start_date").notNull(),
-  endDate: date("end_date"),
-  notes: text("notes"),
-  createdById: uuid("created_by_id").references(() => users.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const calendarEvents = pgTable(
+  "calendar_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    title: text("title").notNull(),
+    // endDate is nullable; a single-day event has startDate only, a trip has both.
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date"),
+    notes: text("notes"),
+    createdById: uuid("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+
+    /**
+     * Time model: dates stay canonical; times are optional wall-clock add-ons.
+     * A null `startTime` means an all-day event — deliberately no separate
+     * boolean column, so "all-day" can never drift out of sync with the times.
+     * `endTime` belongs to `endDate ?? startDate` (a same-day timed event has
+     * no `endDate` at all). The household is single-timezone, so every event
+     * renders in device-local time with no stored zone.
+     */
+    startTime: time("start_time"),
+    endTime: time("end_time"),
+    location: text("location"),
+    url: text("url"),
+    // A named lib/event-colours.ts palette value; null uses the default dot colour.
+    colour: text("colour"),
+    // Household user ids this event applies to; null means both members.
+    attendeeIds: jsonb("attendee_ids").$type<string[]>(),
+    // Pinned events surface first in the agenda (a later PR); unpinned by default.
+    pinned: boolean("pinned").notNull().default(false),
+    // Bumped on every edit; updateCalendarEvent's last-write-wins guard compares
+    // the caller's loaded value against this column in its WHERE clause.
+    updatedAt: timestamp("updated_at", { precision: 3 })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("calendar_events_household_start_idx").on(t.householdId, t.startDate),
+  ],
+);
 
 /**
  * Recurring household chores, each carrying a Chore Cognitive Load Index.

@@ -1,4 +1,4 @@
-import { getCalendarEvents } from "@/lib/queries";
+import { getCalendarEvents, getHouseholdMembers } from "@/lib/queries";
 import { getSetupIssue } from "@/lib/household";
 import { SetupNotice } from "@/components/db-notice";
 import { CalendarEvents } from "./calendar-events";
@@ -6,8 +6,9 @@ import { CalendarEvents } from "./calendar-events";
 export const dynamic = "force-dynamic";
 
 export default async function CalendarPage() {
-  const [events, setupIssue] = await Promise.all([
+  const [events, members, setupIssue] = await Promise.all([
     getCalendarEvents(),
+    getHouseholdMembers(),
     getSetupIssue(),
   ]);
 
@@ -15,7 +16,7 @@ export default async function CalendarPage() {
     <div>
       <h1 className="mb-4 text-2xl font-semibold tracking-tight">Calendar</h1>
       {setupIssue && <SetupNotice issue={setupIssue} />}
-      <CalendarEvents initialEvents={events} />
+      <CalendarEvents initialEvents={events} members={members} />
     </div>
   );
 }

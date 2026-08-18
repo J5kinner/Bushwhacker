@@ -27,6 +27,9 @@ export const CACHE_TAGS = {
   calendarEvents: "calendar-events",
   chores: "chores",
   recipes: "recipes",
+  // Nothing in-app mutates a user row today, so nothing busts this tag yet —
+  // it exists for correctness if that ever changes, not because it is needed now.
+  users: "users",
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -148,6 +151,29 @@ export async function getChores() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
   return fetchChores(householdId);
+}
+
+export interface HouseholdMember {
+  id: string;
+  name: string;
+}
+
+const fetchHouseholdMembers = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.householdId, householdId))
+      .orderBy(asc(users.name)),
+  ["household-members"],
+  { tags: [CACHE_TAGS.users] },
+);
+
+/** The household's members (id + name), for attendee pickers. Empty if no DB/household. */
+export async function getHouseholdMembers(): Promise<HouseholdMember[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchHouseholdMembers(householdId);
 }
 
 /**
