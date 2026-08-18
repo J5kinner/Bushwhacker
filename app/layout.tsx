@@ -6,6 +6,7 @@ import { BottomNav } from "@/components/bottom-nav";
 import { LiveRefresh } from "@/components/live-refresh";
 import { SwRegister } from "@/components/sw-register";
 import { auth } from "@/auth";
+import { getCurrentUserDarkMode } from "@/lib/queries";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -30,11 +31,12 @@ export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const session = await auth();
+  const darkMode = await getCurrentUserDarkMode(session);
 
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased${darkMode ? " dark" : ""}`}
     >
       <body className="bg-background text-foreground">
         {session ? (

@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { asc, desc, eq } from "drizzle-orm";
+import type { Session } from "next-auth";
 import { getDb } from "@/db";
 import {
   shoppingItems,
@@ -11,7 +12,8 @@ import {
   userLocations,
 } from "@/db/schema";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
-import { getHouseholdId } from "./household";
+import { getHouseholdId, getCurrentUserId } from "./household";
+import { isDbConfigured } from "@/db";
 
 /**
  * Read queries are cached server-side under a tag per domain, so navigations
@@ -193,4 +195,24 @@ export async function getMemberLocations(): Promise<MemberLocation[]> {
     .leftJoin(userLocations, eq(userLocations.userId, users.id))
     .where(eq(users.householdId, householdId))
     .orderBy(asc(users.name));
+}
+
+/**
+ * The signed-in member's dark-mode preference. Defaults to false if unset/signed out.
+ * Accepts an already-resolved session, so callers that already called `auth()`
+ * (e.g. the root layout) don't trigger a second session lookup.
+ */
+export async function getCurrentUserDarkMode(
+  session?: Session | null,
+): Promise<boolean> {
+  if (!isDbConfigured()) return false;
+  const userId = await getCurrentUserId(session);
+  if (!userId) return false;
+
+  const [member] = await getDb()
+    .select({ darkMode: users.darkMode })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return member?.darkMode ?? false;
 }

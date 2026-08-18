@@ -47,6 +47,9 @@ export const users = pgTable("users", {
    */
   locationToken: text("location_token").unique(),
 
+  /** Whether this member sees the app in its dark colour scheme. */
+  darkMode: boolean("dark_mode").notNull().default(false),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

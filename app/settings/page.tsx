@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { SetupNotice } from "@/components/db-notice";
 import { CategoryManager } from "./category-manager";
 import { LocationSetup } from "./location-setup";
+import { ThemeToggle } from "./theme-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -31,13 +32,15 @@ export default async function SettingsPage() {
   const endpoint = `${protocol}://${host}/api/location`;
 
   let locationToken: string | null = null;
+  let darkMode = false;
   if (userId && isDbConfigured()) {
     const [member] = await getDb()
-      .select({ token: users.locationToken })
+      .select({ token: users.locationToken, darkMode: users.darkMode })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
     locationToken = member?.token ?? null;
+    darkMode = member?.darkMode ?? false;
   }
 
   return (
@@ -82,6 +85,16 @@ export default async function SettingsPage() {
         ) : (
           <p className="text-sm text-zinc-500">Not signed in.</p>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Appearance
+        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm">Dark mode</p>
+          <ThemeToggle initialDarkMode={darkMode} />
+        </div>
       </section>
 
       <section>
