@@ -1,13 +1,12 @@
 "use client";
 
-import { useOptimistic, useState, useTransition } from "react";
-import { format } from "date-fns";
-import { Plus, ExternalLink } from "lucide-react";
+import { useMemo, useOptimistic, useState, useTransition } from "react";
+import { Plus } from "lucide-react";
 import type { CalendarEvent } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
-import { EVENT_COLOURS, eventColourHex } from "@/lib/event-colours";
-import { displayDomain } from "@/lib/links";
+import { EVENT_COLOURS } from "@/lib/event-colours";
 import type { HouseholdMember } from "@/lib/queries";
+import { expandOccurrences, type Exdate } from "@/lib/recurrence";
 import {
   addCalendarEvent,
   deleteCalendarEvent,
@@ -15,6 +14,7 @@ import {
   togglePinned,
 } from "./actions";
 import { EventSheet } from "./event-sheet";
+import { VIEWS, ViewSwitcher, useSelectedView } from "./view-switcher";
 
 type Action =
   | { type: "add"; event: CalendarEvent }
@@ -41,47 +41,6 @@ function reduce(events: CalendarEvent[], action: Action): CalendarEvent[] {
   }
 }
 
-function formatRange(start: string, end: string | null) {
-  const s = new Date(start).toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
-  if (!end || end === start) return s;
-  const e = new Date(end).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
-  return `${s} – ${e}`;
-}
-
-/** A "HH:mm" (or "HH:mm:ss") wall-clock string as a device-local "9:00 am". */
-function formatTime(time: string): string {
-  const [hours, minutes] = time.split(":").map(Number);
-  const d = new Date();
-  d.setHours(hours, minutes, 0, 0);
-  return format(d, "h:mm a").toLowerCase();
-}
-
-/** "All day" for an untimed event, otherwise "9:00 am" or "9:00 am – 10:30 am". */
-function formatEventTime(startTime: string | null, endTime: string | null) {
-  if (!startTime) return "All day";
-  const start = formatTime(startTime);
-  return endTime ? `${start} – ${formatTime(endTime)}` : start;
-}
-
-/** Initials for the attendees, or null when the event is for both members. */
-function attendeeInitials(
-  attendeeIds: string[] | null,
-  members: HouseholdMember[],
-) {
-  if (!attendeeIds || attendeeIds.length === 0) return null;
-  const initials = attendeeIds
-    .map((id) => members.find((m) => m.id === id)?.name?.[0]?.toUpperCase())
-    .filter((initial): initial is string => Boolean(initial));
-  return initials.length > 0 ? initials.join("") : null;
-}
-
 // Duplicated (not exported) in event-sheet.tsx, which mirrors this add
 // form's styling for its own edit form — keep both in sync by eye.
 const inputClass =
@@ -97,9 +56,17 @@ function chipClass(active: boolean) {
 
 export function CalendarEvents({
   initialEvents,
+  exdates,
+  windowFrom,
+  windowTo,
+  anchorMonth,
   members,
 }: {
   initialEvents: CalendarEvent[];
+  exdates: Exdate[];
+  windowFrom: string;
+  windowTo: string;
+  anchorMonth: string | null;
   members: HouseholdMember[];
 }) {
   const [optimistic, dispatch] = useOptimistic(initialEvents, reduce);
@@ -110,6 +77,20 @@ export function CalendarEvents({
   // not from `optimistic`, so a background change to the row while the sheet
   // is open can't silently rewrite fields the user is mid-edit on.
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+
+  // Expansion happens here, not in a view: every view renders Occurrence[],
+  // never raw CalendarEvent rows, so recurrence (PR 4) lights up for all of
+  // them at once with zero changes to this line or to any view. Identity
+  // expansion today — expandOccurrences passes non-recurring rows through
+  // as single occurrences equal to their own event.
+  const occurrences = useMemo(
+    () => expandOccurrences(optimistic, exdates, windowFrom, windowTo),
+    [optimistic, exdates, windowFrom, windowTo],
+  );
+  const [selectedViewId, setSelectedViewId] = useSelectedView();
+  const SelectedView =
+    VIEWS.find((view) => view.id === selectedViewId)?.component ??
+    VIEWS[0].component;
 
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -351,78 +332,17 @@ export function CalendarEvents({
         <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
 
-      {optimistic.length === 0 ? (
-        <p className="mt-10 text-center text-sm text-zinc-500">
-          No events yet.
-        </p>
-      ) : (
-        <ul className="divide-y divide-black/5 dark:divide-white/10">
-          {optimistic.map((event) => {
-            const colourHex = eventColourHex(event.colour);
-            const attendees = attendeeInitials(event.attendeeIds, members);
-            const summary = [
-              formatRange(event.startDate, event.endDate),
-              formatEventTime(event.startTime, event.endTime),
-              attendees,
-              event.notes,
-            ]
-              .filter(Boolean)
-              .join(" · ");
+      <ViewSwitcher selected={selectedViewId} onSelect={setSelectedViewId} />
 
-            return (
-              <li key={event.id} className="flex items-start gap-3 py-3">
-                <span
-                  className={`mt-1.5 size-2.5 shrink-0 rounded-full ${
-                    colourHex ? "" : "bg-zinc-400 dark:bg-zinc-600"
-                  }`}
-                  style={colourHex ? { backgroundColor: colourHex } : undefined}
-                  aria-hidden
-                />
-                {/*
-                  The row itself opens the edit sheet (delete now lives there,
-                  behind a confirm — a bare trash icon here was too easy to
-                  mis-tap). The link stays independently tappable by stopping
-                  both its click and its keydown (Enter) from bubbling to this
-                  handler — otherwise Enter on the link would open the sheet
-                  instead of following it.
-                */}
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openEventSheet(event)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openEventSheet(event);
-                    }
-                  }}
-                  className="min-w-0 flex-1 cursor-pointer text-left"
-                >
-                  <p className="text-base">{event.title}</p>
-                  <p className="text-xs text-zinc-500">{summary}</p>
-                  {event.location && (
-                    <p className="text-xs text-zinc-500">{event.location}</p>
-                  )}
-                  {event.url && (
-                    <a
-                      href={event.url}
-                      target="_blank"
-                      rel="noopener"
-                      aria-label={`Open link for ${event.title}`}
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:underline"
-                    >
-                      <ExternalLink className="size-3 shrink-0" aria-hidden />
-                      {displayDomain(event.url)}
-                    </a>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <SelectedView
+        key={anchorMonth ?? "default"}
+        occurrences={occurrences}
+        members={members}
+        windowFrom={windowFrom}
+        windowTo={windowTo}
+        anchorMonth={anchorMonth}
+        onOccurrenceClick={openEventSheet}
+      />
 
       {editingEvent && (
         <EventSheet
