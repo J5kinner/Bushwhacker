@@ -2,13 +2,13 @@
 
 import { useOptimistic, useState, useTransition } from "react";
 import { format } from "date-fns";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ExternalLink } from "lucide-react";
 import type { CalendarEvent } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS, eventColourHex } from "@/lib/event-colours";
+import { displayDomain } from "@/lib/links";
+import type { HouseholdMember } from "@/lib/queries";
 import { addCalendarEvent, deleteCalendarEvent } from "./actions";
-
-type Member = { id: string; name: string };
 
 type Action =
   | { type: "add"; event: CalendarEvent }
@@ -55,7 +55,10 @@ function formatEventTime(startTime: string | null, endTime: string | null) {
 }
 
 /** Initials for the attendees, or null when the event is for both members. */
-function attendeeInitials(attendeeIds: string[] | null, members: Member[]) {
+function attendeeInitials(
+  attendeeIds: string[] | null,
+  members: HouseholdMember[],
+) {
   if (!attendeeIds || attendeeIds.length === 0) return null;
   const initials = attendeeIds
     .map((id) => members.find((m) => m.id === id)?.name?.[0]?.toUpperCase())
@@ -79,7 +82,7 @@ export function CalendarEvents({
   members,
 }: {
   initialEvents: CalendarEvent[];
-  members: Member[];
+  members: HouseholdMember[];
 }) {
   const [optimistic, dispatch] = useOptimistic(initialEvents, reduce);
   const [, startTransition] = useTransition();
@@ -97,12 +100,16 @@ export function CalendarEvents({
   const [attendeeIds, setAttendeeIds] = useState<string[] | null>(null);
   const [notes, setNotes] = useState("");
 
-  function run(action: Action, effect: () => Promise<void>) {
+  function run(
+    action: Action,
+    effect: () => Promise<{ error?: string } | void>,
+  ) {
     setError(null);
     startTransition(async () => {
       dispatch(action);
       try {
-        await effect();
+        const result = await effect();
+        if (result?.error) setError(result.error);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong.");
       }
@@ -229,6 +236,7 @@ export function CalendarEvents({
             aria-label="Location"
           />
           <input
+            type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Link (optional)"
@@ -338,6 +346,18 @@ export function CalendarEvents({
                   <p className="text-xs text-zinc-500">{summary}</p>
                   {event.location && (
                     <p className="text-xs text-zinc-500">{event.location}</p>
+                  )}
+                  {event.url && (
+                    <a
+                      href={event.url}
+                      target="_blank"
+                      rel="noopener"
+                      aria-label={`Open link for ${event.title}`}
+                      className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:underline"
+                    >
+                      <ExternalLink className="size-3 shrink-0" aria-hidden />
+                      {displayDomain(event.url)}
+                    </a>
                   )}
                 </div>
                 <button

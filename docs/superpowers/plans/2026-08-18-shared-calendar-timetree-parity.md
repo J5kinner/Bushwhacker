@@ -177,11 +177,13 @@ Parallelism is deliberately modest: Jonah's phone-review gates every wave, so wi
 
 ## ADRs to record
 
-- 0005 — calendar event time model (dates + optional wall-clock times, single-timezone household) and the date-fns dependency (PR 1a).
-- 0006 — recurrence storage and read-time isomorphic expansion (PR 3).
-- 0007 — reminders and web push: timezone column, `reminder_log` idempotency, scheduler choice, iOS constraints (PR 8).
-- 0008 — event attachments via Vercel Blob with client upload (PR 9).
-- 0009 — append-only activity table as the feed's source of truth (PR 7).
+Numbers follow the next free slot on the actual main branch (0005 was taken by Speed Insights upstream of this plan's drafting).
+
+- 0006 — calendar event time model (dates + optional wall-clock times, single-timezone household) and the date-fns dependency (PR 1a).
+- 0007 — recurrence storage and read-time isomorphic expansion (PR 3).
+- 0008 — append-only activity table as the feed's source of truth (PR 7).
+- 0009 — reminders and web push: timezone column, `reminder_log` idempotency, scheduler choice, iOS constraints (PR 8).
+- 0010 — event attachments via Vercel Blob with client upload (PR 9).
 
 ## Wave-0 answers (recorded 2026-08-18)
 

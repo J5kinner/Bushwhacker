@@ -35,90 +35,131 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+type NormalisedFields = {
+  title: string;
+  startDate: string;
+  endDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  location: string | null;
+  url: string | null;
+  colour: string | null;
+  attendeeIds: string[] | null;
+  notes: string | null;
+};
+
+type NormaliseResult =
+  | { ok: true; fields: NormalisedFields }
+  | { ok: false; reason: string };
+
 /**
- * Trim and validate the fields shared by add and update, returning the
- * normalised row values or null on the first rule broken. Every rule mirrors a
- * guard the form already applies before it will submit, so a null here only
- * ever means the client was bypassed (a stale tab, a direct call) — never a
- * surprise for someone using the form normally.
+ * Trim and validate the fields shared by add and update, returning either the
+ * normalised row values or the reason the first broken rule failed. The
+ * reason is surfaced to the caller rather than swallowed, because several of
+ * these rules (the colour palette, the attendee subset, the cross-midnight
+ * check) are server-only — the form does not always stop a bad value before
+ * it submits, so a silent rejection would just make the optimistic row vanish
+ * with no explanation.
  */
-async function normaliseEventInput(input: CalendarEventInput) {
+async function normaliseEventInput(
+  input: CalendarEventInput,
+): Promise<NormaliseResult> {
   const title = input.title.trim();
   const startDate = input.startDate;
-  if (!title || !startDate) return null;
+  if (!title || !startDate) {
+    return { ok: false, reason: "Title and start date are required." };
+  }
 
   const endDate = input.endDate?.trim() || null;
-  if (endDate && endDate < startDate) return null;
+  if (endDate && endDate < startDate) {
+    return { ok: false, reason: "End date can't be before the start date." };
+  }
 
   const startTime = input.startTime?.trim() || null;
   // A null startTime means all-day; an end time only means something alongside
   // a start time, so it is dropped rather than rejected here — the form's "All
   // day" toggle always clears both together anyway.
   const endTime = startTime ? input.endTime?.trim() || null : null;
-  // Cross-midnight rule: endTime belongs to (endDate ?? startDate). Only reject
-  // when there is no endDate, i.e. the times are claimed to be the same day.
-  if (endTime && !endDate && startTime && endTime <= startTime) return null;
+  // Cross-midnight rule: endTime belongs to (endDate ?? startDate). Reject
+  // when that effective end anchor is the same day as startDate and endTime
+  // doesn't come after startTime — a strictly later endDate is always fine.
+  if (endTime && startTime && endTime <= startTime && (!endDate || endDate === startDate)) {
+    return { ok: false, reason: "End time must be after the start time." };
+  }
 
   const url = input.url?.trim() || null;
-  if (url && !isHttpUrl(url)) return null;
+  if (url && !isHttpUrl(url)) {
+    return { ok: false, reason: "Link must be a valid http(s) URL." };
+  }
 
   const colour = input.colour?.trim() || null;
-  if (colour && !isEventColour(colour)) return null;
+  if (colour && !isEventColour(colour)) {
+    return { ok: false, reason: "Unknown colour." };
+  }
 
   const attendeeIds = input.attendeeIds?.length ? input.attendeeIds : null;
   if (attendeeIds) {
     const memberIds = new Set((await getHouseholdMembers()).map((m) => m.id));
-    if (!attendeeIds.every((id) => memberIds.has(id))) return null;
+    if (!attendeeIds.every((id) => memberIds.has(id))) {
+      return { ok: false, reason: "Unknown attendee." };
+    }
   }
 
   return {
-    title,
-    startDate,
-    endDate,
-    startTime,
-    endTime,
-    location: input.location?.trim() || null,
-    url,
-    colour,
-    attendeeIds,
-    notes: input.notes?.trim() || null,
+    ok: true,
+    fields: {
+      title,
+      startDate,
+      endDate,
+      startTime,
+      endTime,
+      location: input.location?.trim() || null,
+      url,
+      colour,
+      attendeeIds,
+      notes: input.notes?.trim() || null,
+    },
   };
 }
 
-export async function addCalendarEvent(input: CalendarEventInput) {
+export async function addCalendarEvent(
+  input: CalendarEventInput,
+): Promise<{ error?: string }> {
   const householdId = await getHouseholdId();
-  if (!householdId) return;
-  const fields = await normaliseEventInput(input);
-  if (!fields) return;
+  if (!householdId) return {};
+  const result = await normaliseEventInput(input);
+  if (!result.ok) return { error: result.reason };
   const createdById = await getCurrentUserId();
 
   await getDb()
     .insert(calendarEvents)
-    .values({ ...fields, householdId, createdById });
+    .values({ ...result.fields, householdId, createdById });
   updateTag(CACHE_TAGS.calendarEvents);
+  return {};
 }
 
 /**
  * Full-field update with a last-write-wins guard: the caller sends the
  * `updatedAt` it loaded the event with, and the WHERE clause only matches that
  * exact value. Zero rows updated means somebody else's edit landed first, so
- * this is the one action here that returns a value — `{ conflict: true }` lets
- * the client show "This event was just changed — reload" instead of silently
- * overwriting a change it never saw.
+ * this action returns a discriminated result rather than throwing —
+ * `{ conflict: true }` lets the client show "This event was just changed —
+ * reload" instead of silently overwriting a change it never saw, and `error`
+ * carries a validation failure the same way `addCalendarEvent` does.
  */
 export async function updateCalendarEvent(
   id: string,
   input: CalendarEventInput,
   expectedUpdatedAt: Date,
-): Promise<{ conflict: boolean }> {
+): Promise<{ conflict: boolean; error?: string }> {
   const householdId = await getHouseholdId();
   if (!householdId) return { conflict: false };
-  const fields = await normaliseEventInput(input);
-  if (!fields) return { conflict: false };
+  const result = await normaliseEventInput(input);
+  if (!result.ok) return { conflict: false, error: result.reason };
 
   const updated = await getDb()
     .update(calendarEvents)
-    .set(fields)
+    .set(result.fields)
     .where(
       and(
         eq(calendarEvents.id, id),
