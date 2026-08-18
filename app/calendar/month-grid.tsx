@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import {
   addMonths,
-  differenceInCalendarDays,
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
@@ -17,16 +16,50 @@ import {
 } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { eventColourHex } from "@/lib/event-colours";
+import { computeWeekLanes, MAX_LANES, type LaneItem } from "@/lib/month-lanes";
 import { occursOnDay, type Occurrence } from "@/lib/recurrence";
 import type { CalendarViewProps } from "./view-switcher";
 import { DaySheet } from "./day-sheet";
 
-/** Visible pill/bar lanes per day cell before the rest collapse into "+n". */
-const MAX_LANES = 3;
 // Applied when an occurrence carries no lib/event-colours.ts value, mirroring
 // the agenda's own default-dot styling so the two views read the same way.
 const DEFAULT_DOT_CLASS = "bg-zinc-400 dark:bg-zinc-600";
 const DEFAULT_BAR_CLASS = "bg-zinc-300 dark:bg-zinc-700/70";
+
+// Monday-first, matching the grid itself — used only by the pre-mount
+// skeleton, which has no real dates to derive labels from yet.
+const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+
+// Server-rendered HTML runs in UTC; the device viewing it may already be
+// 10-11 hours ahead (an Australian morning is still "yesterday" in UTC), so
+// reading "today" straight off `new Date()` during render would make this
+// component's SSR output and its first client render — which React's
+// hydration must match byte-for-byte — disagree, not just on which cell is
+// highlighted but on the grid's whole structure whenever that disagreement
+// straddles a month boundary.
+//
+// Modelled as a useSyncExternalStore "store" (the same technique
+// view-switcher.tsx uses for localStorage) rather than a plain
+// useState+useEffect pair, on purpose: this repo's lint config
+// (react-hooks/set-state-in-effect) flags calling setState synchronously
+// inside an effect as a cascading-render anti-pattern. useSyncExternalStore
+// gets the identical "server and the client's first render agree; only
+// diverge once, safely, right after" result without an effect at all — the
+// server (and the client's first hydration pass) always see
+// `getServerToday`'s null, and only afterwards does React ask
+// `getDeviceToday` for the real value and re-render if it differs. There is
+// nothing to subscribe to (no event fires when the calendar day ticks over),
+// so `subscribe` is a no-op; a re-render from any other cause (e.g. the
+// LiveRefresh poll) naturally re-reads the clock anyway.
+function subscribeToNothing() {
+  return () => {};
+}
+function getDeviceToday(): string {
+  return format(new Date(), "yyyy-MM-dd");
+}
+function getServerToday(): string | null {
+  return null;
+}
 
 function hexToRgba(hex: string, alpha: number): string {
   const value = hex.replace("#", "");
@@ -36,127 +69,89 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-interface LaneItem {
-  occurrence: Occurrence;
-  lane: number;
-  startCol: number;
-  endCol: number;
-  isBar: boolean;
-  roundedLeft: boolean;
-  roundedRight: boolean;
-}
-
 /**
- * Packs one week's occurrences into up to MAX_LANES horizontal lanes shared
- * across all 7 day columns, so a multi-day occurrence keeps the same lane —
- * and therefore the same visual row — on every day it touches within this
- * week. This is the greedy interval-packing every month-grid calendar uses:
- * sort candidates, then place each into the first lane whose last occupant
- * ends before this one starts.
- *
- * Multi-day occurrences are sorted ahead of single-day ones so they always
- * claim the top lanes; within each of those two groups, `orderIndex` (the
- * position `expandOccurrences` already sorted them into — date, then
- * all-day-before-timed, then title) breaks ties, so an all-day single-day
- * occurrence still lands above a timed one on the same day.
- *
- * Anything that doesn't fit in MAX_LANES doesn't get a lane at all; it's
- * folded into the returned per-day `overflow` counts instead, which the
- * "+n" row renders straight from.
+ * Rendered instead of the real grid for the one render where `today` is
+ * still unresolved (see the comment on `today` in MonthGrid) and there's no
+ * `?m=` to fall back on. Fixed at 6 week rows — the maximum any month grid
+ * needs — so swapping it for the real grid once `today` resolves never
+ * shifts the page around it. The nav row above it is a matching, inert
+ * placeholder for the same reason.
  */
-function computeWeekLanes(
-  week: string[],
-  occurrences: Occurrence[],
-  orderIndex: Map<string, number>,
-): { items: LaneItem[]; overflow: number[] } {
-  const weekStart = week[0];
-  const weekEnd = week[6];
-
-  // The union, across the week's 7 days, of whatever `occursOnDay` says
-  // belongs on that day — gathered once for the whole row instead of once
-  // per cell, deduped by key since a multi-day occurrence passes the test
-  // on more than one of those days.
-  const seen = new Set<string>();
-  const candidates: Occurrence[] = [];
-  for (const day of week) {
-    for (const occurrence of occurrences) {
-      if (seen.has(occurrence.key) || !occursOnDay(occurrence, day)) continue;
-      seen.add(occurrence.key);
-      candidates.push(occurrence);
-    }
-  }
-
-  candidates.sort((a, b) => {
-    const aBar = a.endDate !== null;
-    const bBar = b.endDate !== null;
-    if (aBar !== bBar) return aBar ? -1 : 1;
-    return orderIndex.get(a.key)! - orderIndex.get(b.key)!;
-  });
-
-  const laneEnds: number[] = [];
-  const items: LaneItem[] = [];
-  const overflow = [0, 0, 0, 0, 0, 0, 0];
-
-  for (const occurrence of candidates) {
-    // Clamped to this week's 0-6 columns: a bar that starts before or ends
-    // after the week is split at the week boundary, the "split across week
-    // rows" the plan calls for — the un-clamped tail is just this same
-    // occurrence appearing again in the adjacent week's own lane packing.
-    const startCol = Math.max(
-      0,
-      differenceInCalendarDays(parseISO(occurrence.date), parseISO(weekStart)),
-    );
-    const endCol = Math.min(
-      6,
-      differenceInCalendarDays(
-        parseISO(occurrence.endDate ?? occurrence.date),
-        parseISO(weekStart),
-      ),
-    );
-
-    let lane = laneEnds.findIndex((end) => end < startCol);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(endCol);
-    } else {
-      laneEnds[lane] = endCol;
-    }
-
-    if (lane >= MAX_LANES) {
-      for (let col = startCol; col <= endCol; col++) overflow[col] += 1;
-      continue;
-    }
-
-    items.push({
-      occurrence,
-      lane,
-      startCol,
-      endCol,
-      isBar: occurrence.endDate !== null,
-      roundedLeft: occurrence.date >= weekStart,
-      roundedRight: (occurrence.endDate ?? occurrence.date) <= weekEnd,
-    });
-  }
-
-  return { items, overflow };
+function MonthGridSkeleton() {
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          <button type="button" disabled aria-hidden className="rounded-full p-2 text-zinc-500">
+            <ChevronLeft className="size-4" aria-hidden />
+          </button>
+          <span className="min-w-32 text-center text-sm font-medium">&nbsp;</span>
+          <button type="button" disabled aria-hidden className="rounded-full p-2 text-zinc-500">
+            <ChevronRight className="size-4" aria-hidden />
+          </button>
+        </div>
+      </div>
+      <div className="border-l border-t border-black/5 dark:border-white/10">
+        <div className="grid grid-cols-7 text-center text-[10px] font-medium text-zinc-500">
+          {WEEKDAY_LABELS.map((label, i) => (
+            <div
+              key={i}
+              className="border-b border-r border-black/5 py-1 dark:border-white/10"
+            >
+              {label}
+            </div>
+          ))}
+        </div>
+        {Array.from({ length: 6 }, (_, week) => (
+          <div
+            key={week}
+            className="grid grid-cols-7"
+            style={{ gridTemplateRows: `1.3rem repeat(${MAX_LANES}, 0.85rem) 0.7rem` }}
+          >
+            {Array.from({ length: 7 }, (_, col) => (
+              <div
+                key={col}
+                style={{ gridColumn: col + 1, gridRow: "1 / -1" }}
+                className="border-b border-r border-black/5 dark:border-white/10"
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function WeekRow({
   week,
   displayedMonth,
-  todayISO,
+  today,
   occurrences,
   orderIndex,
   onDayClick,
 }: {
   week: string[];
   displayedMonth: string;
-  todayISO: string;
+  today: string | null;
   occurrences: Occurrence[];
   orderIndex: Map<string, number>;
   onDayClick: (day: string) => void;
 }) {
   const { items, overflow } = computeWeekLanes(week, occurrences, orderIndex);
+
+  // Per-day accessible event counts, appended to each day button's
+  // aria-label: every visible lane item touching that column, plus whatever
+  // `overflow` already folded in for it — the same two sources the pills/
+  // bars and the "+n" row are drawn from, so the label always agrees with
+  // what's on screen (or hidden behind "+n") for that day. Pills/bars
+  // themselves are aria-hidden (they're purely visual, painted over a
+  // day-cell button that already owns the tap target), so without this the
+  // day cells would be silent to screen readers beyond a bare date.
+  const dayCounts = week.map(
+    (_, col) =>
+      overflow[col] +
+      items.filter((item) => item.startCol <= col && item.endCol >= col).length,
+  );
 
   return (
     <div
@@ -173,13 +168,15 @@ function WeekRow({
     >
       {week.map((day, col) => {
         const dimmed = day.slice(0, 7) !== displayedMonth;
-        const isToday = day === todayISO;
+        const isToday = today !== null && day === today;
+        const count = dayCounts[col];
+        const countLabel = count > 0 ? `, ${count} event${count === 1 ? "" : "s"}` : "";
         return (
           <button
             key={day}
             type="button"
             onClick={() => onDayClick(day)}
-            aria-label={format(parseISO(day), "EEEE d MMMM")}
+            aria-label={`${format(parseISO(day), "EEEE d MMMM")}${countLabel}`}
             style={{ gridColumn: col + 1, gridRow: "1 / -1" }}
             className={`flex flex-col items-center border-b border-r border-black/5 pt-0.5 dark:border-white/10 ${
               dimmed ? "text-zinc-300 dark:text-zinc-700" : ""
@@ -196,7 +193,7 @@ function WeekRow({
         );
       })}
 
-      {items.map(({ occurrence, lane, startCol, endCol, isBar, roundedLeft, roundedRight }) => {
+      {items.map(({ occurrence, lane, startCol, endCol, isBar, roundedLeft, roundedRight }: LaneItem) => {
         const colourHex = eventColourHex(occurrence.event.colour);
         const style: CSSProperties = {
           gridColumn: `${startCol + 1} / ${endCol + 2}`,
@@ -270,15 +267,21 @@ export function MonthGrid({
   const router = useRouter();
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
-  // The device clock, not the server's: the read window itself is computed
-  // server-side from UTC (app/calendar/page.tsx), which can already be
-  // tomorrow — or a different month entirely — by an Australian morning.
-  // Which month shows by default and which cell is "today" both need to
-  // match the phone in the user's hand, not Vercel's clock, same reasoning
-  // as the agenda's device-local "today"/"tomorrow".
-  const now = new Date();
-  const todayISO = format(now, "yyyy-MM-dd");
-  const displayedMonth = anchorMonth ?? todayISO.slice(0, 7);
+  // See the comment above `subscribeToNothing` for why this reads the
+  // device clock through useSyncExternalStore rather than a state+effect
+  // pair: `today` is null for exactly the render that must match the
+  // server's HTML, then resolves to the real device date right after.
+  const today = useSyncExternalStore(subscribeToNothing, getDeviceToday, getServerToday);
+
+  const displayedMonth = anchorMonth ?? today?.slice(0, 7) ?? null;
+
+  // Only reachable with no `?m=` (anchorMonth null) before the effect above
+  // resolves `today` — i.e. the server render and the client's first render,
+  // which therefore agree on rendering this instead of guessing a month.
+  if (displayedMonth === null) {
+    return <MonthGridSkeleton />;
+  }
+
   const displayedMonthStart = parseISO(`${displayedMonth}-01`);
 
   const gridStart = startOfWeek(startOfMonth(displayedMonthStart), {
@@ -293,17 +296,30 @@ export function MonthGrid({
   const weeks: string[][] = [];
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
 
+  // The full occurrences prop can span the whole ~14-month read window
+  // (hundreds of rows once recurrence lands), but this grid only ever shows
+  // the days between gridStart and gridEnd — filtering once here, rather
+  // than re-scanning the full list inside every week's own lane packing (and
+  // again for whichever day the sheet opens), keeps this view's cost tied to
+  // one month, not the whole window.
+  const gridStartISO = days[0];
+  const gridEndISO = days[days.length - 1];
+  const visibleOccurrences = occurrences.filter(
+    (o) => o.date <= gridEndISO && (o.endDate ?? o.date) >= gridStartISO,
+  );
+
   // The same date/all-day/title order `expandOccurrences` already produced,
   // kept as a lookup so `computeWeekLanes` can use it as a tiebreaker
-  // without re-sorting per week.
-  const orderIndex = new Map(occurrences.map((o, i) => [o.key, i]));
+  // without re-sorting per week. Filtering above preserves that relative
+  // order, so indices taken from the filtered list still agree with it.
+  const orderIndex = new Map(visibleOccurrences.map((o, i) => [o.key, i]));
 
   function goToMonth(monthDate: Date) {
     router.replace(`/calendar?m=${format(monthDate, "yyyy-MM")}`);
   }
 
   const dayOccurrences = selectedDay
-    ? occurrences.filter((o) => occursOnDay(o, selectedDay))
+    ? visibleOccurrences.filter((o) => occursOnDay(o, selectedDay))
     : [];
 
   return (
@@ -357,8 +373,8 @@ export function MonthGrid({
             key={week[0]}
             week={week}
             displayedMonth={displayedMonth}
-            todayISO={todayISO}
-            occurrences={occurrences}
+            today={today}
+            occurrences={visibleOccurrences}
             orderIndex={orderIndex}
             onDayClick={setSelectedDay}
           />
