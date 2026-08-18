@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useOptimistic, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import type { CalendarEvent } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
@@ -69,6 +70,7 @@ export function CalendarEvents({
   anchorMonth: string | null;
   members: HouseholdMember[];
 }) {
+  const router = useRouter();
   const [optimistic, dispatch] = useOptimistic(initialEvents, reduce);
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +175,13 @@ export function CalendarEvents({
     setAttendeeIds(null);
     setNotes("");
     run({ type: "add", event: temp }, () => addCalendarEvent(fields));
+
+    // An add outside the loaded window would otherwise vanish with no
+    // feedback — expandOccurrences filters it straight back out — so jump
+    // the window to wherever it will actually show up.
+    if (startDate < windowFrom || startDate > windowTo) {
+      router.push(`/calendar?m=${startDate.slice(0, 7)}`);
+    }
   }
 
   return (

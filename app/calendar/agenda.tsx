@@ -195,8 +195,13 @@ export function Agenda({
   const displayedMonth = anchorMonth ?? today.slice(0, 7);
   const displayedMonthStart = parseISO(`${displayedMonth}-01`);
 
+  // Chevron/Today navigation replaces history rather than pushing it: this is
+  // still the same continuous agenda, just re-anchored, so stepping through
+  // several months (or tapping Today) shouldn't stack up a chain of "back"
+  // presses to get out of. An out-of-window add (calendar-events.tsx) is a
+  // real navigation the user may want to back out of, so that one does push.
   function goToMonth(monthDate: Date) {
-    router.push(`/calendar?m=${format(monthDate, "yyyy-MM")}`);
+    router.replace(`/calendar?m=${format(monthDate, "yyyy-MM")}`);
   }
 
   return (
@@ -211,8 +216,16 @@ export function Agenda({
           >
             <ChevronLeft className="size-4" aria-hidden />
           </button>
-          <span className="min-w-28 text-center text-sm font-medium">
-            {format(displayedMonthStart, "MMMM yyyy")}
+          {/*
+            "From <month>", not a bare month name: the agenda is a
+            continuous scrolling list forward from this anchor to the end of
+            the window, not scoped to just this one month — that's the month
+            grid arriving in PR 2b. A bare month name here would read like a
+            filter that hides everything outside it, which isn't what
+            stepping the chevrons does.
+          */}
+          <span className="min-w-32 text-center text-sm font-medium">
+            From {format(displayedMonthStart, "MMMM yyyy")}
           </span>
           <button
             type="button"
@@ -226,7 +239,7 @@ export function Agenda({
         {anchorMonth && (
           <button
             type="button"
-            onClick={() => router.push("/calendar")}
+            onClick={() => router.replace("/calendar")}
             className="rounded-full border border-black/10 px-3 py-1.5 text-xs dark:border-white/15"
           >
             Today
@@ -270,7 +283,14 @@ export function Agenda({
 
           {dayGroups.length === 0 ? (
             <p className="mt-10 text-center text-sm text-zinc-500">
-              No events in this window.
+              {/*
+                Reachable only in the default view, with only-earlier events
+                and "Show earlier" collapsed (a set `?m=` has no lower bound
+                left to hide anything behind) — "No events in this window."
+                would read as contradicting the "Show earlier" button sitting
+                right above it.
+              */}
+              {anchorMonth ? "No events in this window." : "No events from today."}
             </p>
           ) : (
             dayGroups.map(([date, dayOccurrences]) => (
