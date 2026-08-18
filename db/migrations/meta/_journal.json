@@ -43,6 +43,13 @@
       "when": 1786366183236,
       "tag": "0005_tiny_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787040847545,
+      "tag": "0006_damp_lifeguard",
+      "breakpoints": true
     }
   ]
 }
