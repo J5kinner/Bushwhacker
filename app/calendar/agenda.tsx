@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addMonths, format, parseISO, subMonths } from "date-fns";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
@@ -52,11 +52,50 @@ function attendeeInitials(
   return initials.length > 0 ? initials.join("") : null;
 }
 
-/** "Today" / "Tomorrow" / "Wed 20 Aug" for a day-group heading, device-local. */
-function dayHeading(dateISO: string, todayISO: string, tomorrowISO: string): string {
+/**
+ * "Today" / "Tomorrow" / "Wed 20 Aug" for a day-group heading, device-local.
+ * `todayISO` is null for the one render before Agenda's mount effect
+ * resolves the device's real date (see the comment on `today` there) — with
+ * nothing to compare against yet, every heading just shows its own date,
+ * which is stable on its own since it comes from the occurrence, not the
+ * clock.
+ */
+function dayHeading(dateISO: string, todayISO: string | null, tomorrowISO: string | null): string {
+  if (todayISO === null) return format(parseISO(dateISO), "EEE d MMM");
   if (dateISO === todayISO) return "Today";
   if (dateISO === tomorrowISO) return "Tomorrow";
   return format(parseISO(dateISO), "EEE d MMM");
+}
+
+// Server-rendered HTML runs in UTC; the device viewing it may already be
+// 10-11 hours ahead (an Australian morning is still "yesterday" in UTC), so
+// reading "today" straight off `new Date()` during render would make this
+// component's SSR output and its first client render — which React's
+// hydration must match byte-for-byte — disagree not just on the "Today"/
+// "Tomorrow" labels, but on `listStart`, and therefore on WHICH occurrences
+// are even in `visible`.
+//
+// Modelled as a useSyncExternalStore "store" (the same technique
+// view-switcher.tsx uses for localStorage) rather than a plain
+// useState+useEffect pair, on purpose: this repo's lint config
+// (react-hooks/set-state-in-effect) flags calling setState synchronously
+// inside an effect as a cascading-render anti-pattern. useSyncExternalStore
+// gets the identical "server and the client's first render agree; only
+// diverge once, safely, right after" result without an effect at all — the
+// server (and the client's first hydration pass) always see
+// `getServerToday`'s null, and only afterwards does React ask
+// `getDeviceToday` for the real value and re-render if it differs. There is
+// nothing to subscribe to (no event fires when the calendar day ticks over),
+// so `subscribe` is a no-op; a re-render from any other cause (e.g. the
+// LiveRefresh poll) naturally re-reads the clock anyway.
+function subscribeToNothing() {
+  return () => {};
+}
+function getDeviceToday(): string {
+  return format(new Date(), "yyyy-MM-dd");
+}
+function getServerToday(): string | null {
+  return null;
 }
 
 function OccurrenceRow({
@@ -157,18 +196,26 @@ export function Agenda({
   // effect, which would just re-render synchronously right after mount.
   const [showEarlier, setShowEarlier] = useState(false);
 
-  const now = new Date();
-  const today = format(now, "yyyy-MM-dd");
-  const tomorrow = format(addDays(now, 1), "yyyy-MM-dd");
+  // See the comment above `subscribeToNothing` for why this reads the
+  // device clock through useSyncExternalStore rather than a state+effect
+  // pair: `today` is null for exactly the render that must match the
+  // server's HTML, then resolves to the real device date right after; every
+  // value derived from it below has a null-safe, server-stable fallback for
+  // that one render.
+  const today = useSyncExternalStore(subscribeToNothing, getDeviceToday, getServerToday);
+  const tomorrow = today ? format(addDays(parseISO(today), 1), "yyyy-MM-dd") : null;
 
   // No `?m=`: the default "live" view starts at today, with a Show-earlier
   // toggle for anything still in the window before it. A set `?m=` is a
   // specific month the user navigated to — it always starts at that month's
   // first day; the window is already bounded there, so there is nothing for
-  // a Show-earlier toggle to reveal.
+  // a Show-earlier toggle to reveal. Before `today` resolves there is no
+  // "today" to start from yet, so this falls back to the full window —
+  // exactly the already-expanded "Show earlier" state, which is stable
+  // between server and client because it never reads the clock.
   const listStart = anchorMonth
     ? `${anchorMonth}-01`
-    : showEarlier
+    : showEarlier || today === null
       ? windowFrom
       : today;
 
@@ -187,12 +234,16 @@ export function Agenda({
   }
   const dayGroups = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
 
-  const hasEarlier = !anchorMonth && occurrences.some((o) => o.date < today);
+  const hasEarlier =
+    !anchorMonth && today !== null && occurrences.some((o) => o.date < today);
 
   // The nav row's label/targets track the requested `?m=` when set, else the
   // DEVICE's current month — not the server's default anchor, which is UTC
-  // and can disagree with the device by a day.
-  const displayedMonth = anchorMonth ?? today.slice(0, 7);
+  // and can disagree with the device by a day. Before `today` resolves
+  // there's nothing device-local to fall back to yet, so this reuses
+  // `windowFrom`'s month instead — again server-stable, and only ever
+  // visible for the one render before the mount effect above fires.
+  const displayedMonth = anchorMonth ?? today?.slice(0, 7) ?? windowFrom.slice(0, 7);
   const displayedMonthStart = parseISO(`${displayedMonth}-01`);
 
   // Chevron/Today navigation replaces history rather than pushing it: this is

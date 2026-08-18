@@ -6,6 +6,7 @@ import type { CalendarEvent } from "@/db/schema";
 import type { Occurrence } from "@/lib/recurrence";
 import type { HouseholdMember } from "@/lib/queries";
 import { Agenda } from "./agenda";
+import { MonthGrid } from "./month-grid";
 
 /**
  * The props every registered view is rendered with. Deliberately the same
@@ -32,13 +33,19 @@ export interface CalendarViewDefinition {
 /**
  * The view-switcher seam. Every registered view renders against the same
  * `CalendarViewProps`, built once in calendar-events.tsx from the optimistic
- * event state (`expandOccurrences` over `{ optimistic, exdates }`). Only
- * "Agenda" exists in this PR — PR 2b registers "Month" here, PR 5 registers
- * "Day" — each a pure addition to this array plus its own component file;
- * neither this file's plumbing nor calendar-events.tsx's data flow changes
- * when a view is added.
+ * event state (`expandOccurrences` over `{ optimistic, exdates }`). "Month"
+ * (PR 2b) and "Agenda" exist so far — PR 5 registers "Day" — each a pure
+ * addition to this array plus its own component file; neither this file's
+ * plumbing nor calendar-events.tsx's data flow changes when a view is added.
+ *
+ * Month is listed first: it's TimeTree's primary view, so it's also this
+ * array's `[0]` — both `DEFAULT_VIEW_ID` below and calendar-events.tsx's own
+ * `VIEWS[0]` fallback read straight off array position, so a first-time
+ * visitor (and any unknown/cleared localStorage value) now lands on Month
+ * with no separate default to keep in sync here.
  */
 export const VIEWS: CalendarViewDefinition[] = [
+  { id: "month", label: "Month", component: MonthGrid },
   { id: "agenda", label: "Agenda", component: Agenda },
 ];
 
