@@ -253,3 +253,163 @@ test("occursOnDay checks a day against the occurrence's span", () => {
   assert.equal(occursOnDay(occurrence, "2026-08-05"), true);
   assert.equal(occursOnDay(occurrence, "2026-08-06"), false);
 });
+
+test("an unrecognised repeatFreq value expands to nothing rather than defaulting to yearly", () => {
+  // repeatFreq has no DB CHECK constraint (it's `text`, not a real enum), so a
+  // future/bad value must fail closed. This exercises the type system's back
+  // door with an `as` cast — the whole point is a value the union doesn't
+  // admit.
+  const event = makeEvent({ startDate: "2026-08-01", repeatFreq: "biweekly" as never });
+  const result = expandOccurrences([event], [], "2026-01-01", "2026-12-31");
+  assert.equal(result.length, 0);
+});
+
+// --- Far-back fast-forward: each stepper (weekly, monthly, yearly) carries
+// its own independent skip-cycle arithmetic, so each needs its own long-range
+// check. Expected dates below are derived by hand from calendar arithmetic
+// (year-transition weekday parity, absolute month-index parity), not by
+// running expandOccurrences and reading back whatever it produced.
+
+test("weekly fast-forward: interval 2 with a weekday set, starting 8+ years before the window", () => {
+  // Start 2018-01-01 is a Monday (day-of-week carried forward by hand from
+  // the well-known 2000-01-01 = Saturday, adding 365/366 per year and
+  // reducing mod 7 for each year 2000-2017). Its week (Sun-Sat) starts
+  // 2017-12-31. With weekdays [Mon, Thu] and interval 2, active weeks are
+  // every second week counting from that anchor.
+  // 2017-12-31 to 2026-08-01 is 3135 days = 447 weeks + 6 days, so
+  // 2026-08-01 falls 6 days into week #447 (an ODD cycle index -> inactive).
+  // The nearest active (even) week Sundays are 2026-08-02 (#448) and
+  // 2026-08-16 (#450); #452 (2026-08-30) has its Monday (08-31) still
+  // inside an August window but its Thursday (09-03) pushed past it.
+  const event = makeEvent({
+    startDate: "2018-01-01",
+    repeatFreq: "weekly",
+    repeatInterval: 2,
+    repeatWeekdays: [1, 4],
+  });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-31");
+  assert.deepEqual(result.map((o) => o.date), [
+    "2026-08-03",
+    "2026-08-06",
+    "2026-08-17",
+    "2026-08-20",
+    "2026-08-31",
+  ]);
+});
+
+test("monthly fast-forward: interval 3 (quarterly), starting 10 years before the window", () => {
+  // Start 2016-01-31 on a 31st, stepping 3 months at a time. Because 12 is a
+  // multiple of the 3-month interval, a whole-year offset never shifts which
+  // months are active — quarters from a January start are always
+  // Jan/Apr/Jul/Oct, in every year, forever. Of those, April only has 30
+  // days, so it never fires; January, July and October all have 31.
+  const event = makeEvent({ startDate: "2016-01-31", repeatFreq: "monthly", repeatInterval: 3 });
+  const result = expandOccurrences([event], [], "2026-01-01", "2026-12-31");
+  assert.deepEqual(result.map((o) => o.date), ["2026-01-31", "2026-07-31", "2026-10-31"]);
+});
+
+test("yearly fast-forward: starting 8 years before a multi-year window, only leap years fire", () => {
+  const event = makeEvent({ startDate: "2016-02-29", repeatFreq: "yearly" });
+  const result = expandOccurrences([event], [], "2024-01-01", "2032-12-31");
+  assert.deepEqual(result.map((o) => o.date), ["2024-02-29", "2028-02-29", "2032-02-29"]);
+});
+
+// --- Degenerate inputs: locking in today's verified-correct handling so a
+// future change can't silently regress it.
+
+test("repeatInterval 0 clamps to 1", () => {
+  const event = makeEvent({ startDate: "2026-08-01", repeatFreq: "daily", repeatInterval: 0 });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-03");
+  assert.deepEqual(result.map((o) => o.date), ["2026-08-01", "2026-08-02", "2026-08-03"]);
+});
+
+test("a negative repeatInterval clamps to 1", () => {
+  const event = makeEvent({ startDate: "2026-08-01", repeatFreq: "daily", repeatInterval: -5 });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-03");
+  assert.deepEqual(result.map((o) => o.date), ["2026-08-01", "2026-08-02", "2026-08-03"]);
+});
+
+test("repeatUntil before startDate expands to nothing", () => {
+  const event = makeEvent({
+    startDate: "2026-08-10",
+    repeatFreq: "daily",
+    repeatUntil: "2026-08-05",
+  });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-31");
+  assert.equal(result.length, 0);
+});
+
+test("identity branch: endDate before startDate clamps to null instead of an inverted span", () => {
+  const event = makeEvent({ startDate: "2026-08-10", endDate: "2026-08-05" });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-31");
+  assert.deepEqual(result.map((o) => ({ date: o.date, endDate: o.endDate })), [
+    { date: "2026-08-10", endDate: null },
+  ]);
+});
+
+test("recurring branch: a master with endDate before startDate clamps every occurrence's endDate to null", () => {
+  const event = makeEvent({
+    startDate: "2026-08-10",
+    endDate: "2026-08-05",
+    repeatFreq: "daily",
+  });
+  const result = expandOccurrences([event], [], "2026-08-10", "2026-08-11");
+  assert.deepEqual(result.map((o) => ({ date: o.date, endDate: o.endDate })), [
+    { date: "2026-08-10", endDate: null },
+    { date: "2026-08-11", endDate: null },
+  ]);
+});
+
+test("a recurring master starting exactly on windowEnd yields exactly that one occurrence", () => {
+  const event = makeEvent({ startDate: "2026-08-31", repeatFreq: "daily" });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-31");
+  assert.deepEqual(result.map((o) => o.date), ["2026-08-31"]);
+});
+
+test("a recurring master starting inside the window expands from its own start, not the window start", () => {
+  const event = makeEvent({ startDate: "2026-08-15", repeatFreq: "daily" });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-20");
+  assert.deepEqual(result.map((o) => o.date), [
+    "2026-08-15",
+    "2026-08-16",
+    "2026-08-17",
+    "2026-08-18",
+    "2026-08-19",
+    "2026-08-20",
+  ]);
+});
+
+test("a multi-day recurring occurrence straddling windowStart is included", () => {
+  // Weekly, no weekday set (defaults to the start date's own weekday), 5-day
+  // span. Occurrences: 07-20..07-25, 07-27..08-01, 08-03..08-08, ... Only the
+  // second one overlaps a window that is just the single day 2026-08-01: it
+  // starts five days before the window but its span reaches exactly to it.
+  const event = makeEvent({
+    startDate: "2026-07-20",
+    endDate: "2026-07-25",
+    repeatFreq: "weekly",
+  });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-01");
+  assert.deepEqual(result.map((o) => ({ date: o.date, endDate: o.endDate })), [
+    { date: "2026-07-27", endDate: "2026-08-01" },
+  ]);
+});
+
+test("an explicit empty repeatWeekdays array falls back to the start date's own weekday", () => {
+  const event = makeEvent({ startDate: "2026-08-03", repeatFreq: "weekly", repeatWeekdays: [] });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-21");
+  assert.deepEqual(result.map((o) => o.date), ["2026-08-03", "2026-08-10", "2026-08-17"]);
+});
+
+test("out-of-range repeatWeekdays entries are dropped rather than shifting the date", () => {
+  // 7 and -1 are not valid getDay() values; with them filtered out, nothing
+  // valid remains, so this falls back to the start date's own weekday exactly
+  // like an empty/absent set.
+  const event = makeEvent({
+    startDate: "2026-08-03",
+    repeatFreq: "weekly",
+    repeatWeekdays: [7, -1] as number[],
+  });
+  const result = expandOccurrences([event], [], "2026-08-01", "2026-08-21");
+  assert.deepEqual(result.map((o) => o.date), ["2026-08-03", "2026-08-10", "2026-08-17"]);
+});

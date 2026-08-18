@@ -125,9 +125,21 @@ function dailyDates(startISO: string, interval: number, earliestNeeded: string, 
 }
 
 /**
+ * Weekday numbers come straight off a DB column with no CHECK constraint, so
+ * an out-of-range value (a bad write, or a future looser column) must not
+ * silently shift a date onto the wrong day (7 -> the following Sunday via
+ * plain `addDays`, -1 -> the prior Saturday) — filter to the valid 0-6 range
+ * and fall back to the start date's own weekday if nothing valid remains.
+ */
+function normaliseWeekdays(weekdays: number[] | null | undefined, start: Date): number[] {
+  const valid = weekdays ? [...new Set(weekdays)].filter((w) => w >= 0 && w <= 6) : [];
+  return valid.length ? valid.sort((a, b) => a - b) : [getDay(start)];
+}
+
+/**
  * Weekly occurrence start dates. `weekdays` are JS `getDay()` numbers
- * (0 = Sunday); an empty/absent set falls back to the start date's own
- * weekday. Weeks are anchored to the Sunday on/before the start date so a
+ * (0 = Sunday); an empty/absent/invalid set falls back to the start date's
+ * own weekday. Weeks are anchored to the Sunday on/before the start date so a
  * weekday set spanning the week boundary (e.g. Sunday and Friday together)
  * still steps by whole `interval`-week cycles rather than drifting.
  */
@@ -139,7 +151,7 @@ function weeklyDates(
   until: string,
 ): string[] {
   const start = parseISO(startISO);
-  const days = weekdays && weekdays.length ? [...new Set(weekdays)].sort((a, b) => a - b) : [getDay(start)];
+  const days = normaliseWeekdays(weekdays, start);
   const anchorWeekStart = startOfWeek(start, { weekStartsOn: 0 });
 
   const diffWeeks = differenceInCalendarWeeks(parseISO(earliestNeeded), anchorWeekStart, { weekStartsOn: 0 });
@@ -206,7 +218,11 @@ function expandMasterDates(event: ExpandableEvent, windowStart: string, windowEn
   // A multi-day master can start before the window and still have its tail
   // land inside it, so generation must reach back far enough to catch that —
   // but never earlier than the master's own start, which bounds it below.
-  const earliestNeeded = maxISO(event.startDate, toISO(addDays(parseISO(windowStart), -span)));
+  // The padding itself is clamped to 0: a negative span (endDate before
+  // startDate, which nothing in the schema forbids) must not flip this into
+  // padding *forward*, which would fast-forward straight past a window that
+  // starts right at the master's own start date.
+  const earliestNeeded = maxISO(event.startDate, toISO(addDays(parseISO(windowStart), -Math.max(0, span))));
 
   const candidates =
     event.repeatFreq === "daily"
@@ -215,7 +231,9 @@ function expandMasterDates(event: ExpandableEvent, windowStart: string, windowEn
         ? weeklyDates(event.startDate, interval, event.repeatWeekdays, earliestNeeded, until)
         : event.repeatFreq === "monthly"
           ? monthlyStepDates(event.startDate, interval, earliestNeeded, until)
-          : monthlyStepDates(event.startDate, interval * 12, earliestNeeded, until); // yearly
+          : event.repeatFreq === "yearly"
+            ? monthlyStepDates(event.startDate, interval * 12, earliestNeeded, until)
+            : []; // unrecognised repeatFreq (no DB constraint guarantees the enum) -> no occurrences, never a silent guess
 
   return candidates.filter((d) => {
     if (d < event.startDate || d > until) return false;
@@ -272,8 +290,15 @@ export function expandOccurrences(
   const byKey = new Map<string, Occurrence>();
 
   for (const event of events) {
+    const isOverride = Boolean(event.seriesId && event.originalDate);
+
     if (!event.repeatFreq) {
-      const endDate = event.endDate ?? null;
+      // Route through the same span-to-endDate normalisation as the
+      // recurring branch (below) so a row with endDate < startDate — nothing
+      // in the schema forbids it — clamps to null here too, instead of
+      // producing an occurrence that overlapsWindow() and occursOnDay() then
+      // disagree about.
+      const endDate = occurrenceEndDate(event.startDate, spanDays(event));
       if (!overlapsWindow(event.startDate, endDate, windowStart, windowEnd)) continue;
       const key = `${event.id}:${event.startDate}`;
       if (suppressed.has(key)) continue;
@@ -281,7 +306,7 @@ export function expandOccurrences(
         event,
         date: event.startDate,
         endDate,
-        isOverride: Boolean(event.seriesId && event.originalDate),
+        isOverride,
         key,
       });
       continue;
@@ -295,7 +320,7 @@ export function expandOccurrences(
         event,
         date,
         endDate: occurrenceEndDate(date, span),
-        isOverride: false,
+        isOverride,
         key,
       });
     }
