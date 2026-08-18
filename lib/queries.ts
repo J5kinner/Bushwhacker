@@ -1,7 +1,8 @@
 import { unstable_cache } from "next/cache";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Session } from "next-auth";
 import { getDb } from "@/db";
+import type { CalendarEvent } from "@/db/schema";
 import {
   shoppingItems,
   shoppingCategories,
@@ -11,6 +12,7 @@ import {
   users,
   userLocations,
 } from "@/db/schema";
+import type { Exdate } from "@/lib/recurrence";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId, getCurrentUserId } from "./household";
 import { isDbConfigured } from "@/db";
@@ -117,22 +119,57 @@ export async function getRecipes() {
   return fetchRecipes(householdId);
 }
 
-const fetchCalendarEvents = unstable_cache(
-  (householdId: string) =>
-    getDb()
-      .select()
-      .from(calendarEvents)
-      .where(eq(calendarEvents.householdId, householdId))
-      .orderBy(asc(calendarEvents.startDate)),
-  ["calendar-events"],
-  { tags: [CACHE_TAGS.calendarEvents] },
-);
+function selectCalendarWindow(householdId: string, from: string, to: string) {
+  return getDb()
+    .select()
+    .from(calendarEvents)
+    .where(
+      and(
+        eq(calendarEvents.householdId, householdId),
+        lte(calendarEvents.startDate, to),
+        // A trip's endDate can be null (single-day event); its effective end
+        // for overlap purposes is then its own startDate.
+        gte(sql`coalesce(${calendarEvents.endDate}, ${calendarEvents.startDate})`, from),
+      ),
+    )
+    .orderBy(asc(calendarEvents.startDate));
+}
 
-/** Upcoming calendar events, earliest start first. */
-export async function getCalendarEvents() {
+/**
+ * Raw event rows overlapping the inclusive `[from, to]` "YYYY-MM-DD" window,
+ * plus their exdates — the caller runs `expandOccurrences` (lib/recurrence.ts)
+ * over the result to get concrete Occurrence[]. This function only wraps the
+ * read in `unstable_cache`, tagged (not keyed) by `calendarEvents` so any
+ * mutation's tag bust invalidates every open window's cache entry, not just
+ * the one that happened to be current when the mutation landed.
+ *
+ * CRITICAL: `from`/`to` are always the caller's window bounds (see
+ * app/calendar/page.tsx) — never derive them from `Date.now()`/"today" in
+ * here. This function's whole job is to be a pure cache key -> rows mapping;
+ * if "today" were computed inside it instead, the first request to populate a
+ * given window's cache entry would freeze that day into the cached result
+ * until the tag is next busted, silently going stale for every other viewer
+ * on every later day.
+ */
+export async function getCalendarWindow(
+  from: string,
+  to: string,
+): Promise<{ events: CalendarEvent[]; exdates: Exdate[] }> {
   const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchCalendarEvents(householdId);
+  if (!householdId) return { events: [], exdates: [] };
+
+  const events = await unstable_cache(
+    () => selectCalendarWindow(householdId, from, to),
+    ["calendar-window", householdId, from, to],
+    { tags: [CACHE_TAGS.calendarEvents] },
+  )();
+
+  // PR 4 populates this from event_exdates and extends selectCalendarWindow to
+  // also pull in recurrence masters that started before `from` but still
+  // generate occurrences inside the window.
+  const exdates: Exdate[] = [];
+
+  return { events, exdates };
 }
 
 const fetchChores = unstable_cache(
