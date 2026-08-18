@@ -7,38 +7,89 @@ import type { CalendarEvent } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS } from "@/lib/event-colours";
 import type { HouseholdMember } from "@/lib/queries";
-import { expandOccurrences, type Exdate } from "@/lib/recurrence";
+import { expandOccurrences, type Exdate, type Occurrence } from "@/lib/recurrence";
 import {
   addCalendarEvent,
   deleteCalendarEvent,
+  deleteOccurrence,
+  deleteSeries,
+  editOccurrence,
   updateCalendarEvent,
   togglePinned,
 } from "./actions";
 import { EventSheet } from "./event-sheet";
 import { VIEWS, ViewSwitcher, useSelectedView } from "./view-switcher";
 
+/**
+ * The optimistic state mirrors the raw rows the server holds (design
+ * decision 3 of the shared-calendar plan): `expandOccurrences` runs over
+ * `{ events, exdates }` the same way whether the rows come from a committed
+ * server read or an in-flight optimistic update, so a still-saving edit or
+ * delete renders through the exact same code path as a landed one.
+ */
+type OptimisticState = { events: CalendarEvent[]; exdates: Exdate[] };
+
 type Action =
   | { type: "add"; event: CalendarEvent }
   | { type: "edit"; event: CalendarEvent }
   | { type: "delete"; id: string }
-  | { type: "pin"; id: string; pinned: boolean };
+  | { type: "pin"; id: string; pinned: boolean }
+  // "Delete this occurrence only" on a recurring master: suppress it without
+  // touching the master row, mirroring the server's own exdate insert.
+  | { type: "addExdate"; eventId: string; date: string }
+  // "Edit this occurrence only": the master gains an exdate for the original
+  // date AND a standalone override row appears at once, matching what
+  // editOccurrence does server-side in a single action.
+  | { type: "addOverride"; exdate: Exdate; event: CalendarEvent }
+  // "Delete the whole series": the master goes, and so does every row this
+  // series ever produced an override for, plus their own exdates (an
+  // override could in principle carry its own, though today's UI never
+  // creates one) — otherwise a stale override/exdate would linger in local
+  // state until the next full reload.
+  | { type: "deleteSeries"; eventId: string };
 
-function reduce(events: CalendarEvent[], action: Action): CalendarEvent[] {
+function sortByStartDate(events: CalendarEvent[]): CalendarEvent[] {
+  return [...events].sort((a, b) => a.startDate.localeCompare(b.startDate));
+}
+
+function reduce(state: OptimisticState, action: Action): OptimisticState {
   switch (action.type) {
     case "add":
-      return [...events, action.event].sort((a, b) =>
-        a.startDate.localeCompare(b.startDate),
-      );
+      return { ...state, events: sortByStartDate([...state.events, action.event]) };
     case "edit":
-      return events
-        .map((e) => (e.id === action.event.id ? action.event : e))
-        .sort((a, b) => a.startDate.localeCompare(b.startDate));
+      return {
+        ...state,
+        events: sortByStartDate(
+          state.events.map((e) => (e.id === action.event.id ? action.event : e)),
+        ),
+      };
     case "delete":
-      return events.filter((e) => e.id !== action.id);
+      return { ...state, events: state.events.filter((e) => e.id !== action.id) };
     case "pin":
-      return events.map((e) =>
-        e.id === action.id ? { ...e, pinned: action.pinned } : e,
+      return {
+        ...state,
+        events: state.events.map((e) =>
+          e.id === action.id ? { ...e, pinned: action.pinned } : e,
+        ),
+      };
+    case "addExdate":
+      return { ...state, exdates: [...state.exdates, { eventId: action.eventId, date: action.date }] };
+    case "addOverride":
+      return {
+        events: sortByStartDate([...state.events, action.event]),
+        exdates: [...state.exdates, action.exdate],
+      };
+    case "deleteSeries": {
+      const removedIds = new Set(
+        state.events
+          .filter((e) => e.id === action.eventId || e.seriesId === action.eventId)
+          .map((e) => e.id),
       );
+      return {
+        events: state.events.filter((e) => !removedIds.has(e.id)),
+        exdates: state.exdates.filter((x) => !removedIds.has(x.eventId)),
+      };
+    }
   }
 }
 
@@ -54,6 +105,27 @@ function chipClass(active: boolean) {
       : "border-black/10 dark:border-white/15"
   }`;
 }
+
+type RepeatFreq = "daily" | "weekly" | "monthly" | "yearly";
+
+// getDay() order (0 = Sunday); duplicated in event-sheet.tsx alongside the
+// rest of the repeat control, same reason as inputClass/chipClass above.
+const WEEKDAY_LABELS: { day: number; short: string; label: string }[] = [
+  { day: 0, short: "S", label: "Sunday" },
+  { day: 1, short: "M", label: "Monday" },
+  { day: 2, short: "T", label: "Tuesday" },
+  { day: 3, short: "W", label: "Wednesday" },
+  { day: 4, short: "T", label: "Thursday" },
+  { day: 5, short: "F", label: "Friday" },
+  { day: 6, short: "S", label: "Saturday" },
+];
+
+const REPEAT_UNIT_LABEL: Record<RepeatFreq, string> = {
+  daily: "day(s)",
+  weekly: "week(s)",
+  monthly: "month(s)",
+  yearly: "year(s)",
+};
 
 export function CalendarEvents({
   initialEvents,
@@ -71,23 +143,28 @@ export function CalendarEvents({
   members: HouseholdMember[];
 }) {
   const router = useRouter();
-  const [optimistic, dispatch] = useOptimistic(initialEvents, reduce);
+  const [optimistic, dispatch] = useOptimistic<OptimisticState, Action>(
+    { events: initialEvents, exdates },
+    reduce,
+  );
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  // The event whose sheet is open, snapshotted at tap time — the sheet's form
-  // and its last-write-wins `expectedUpdatedAt` both come from this snapshot,
-  // not from `optimistic`, so a background change to the row while the sheet
-  // is open can't silently rewrite fields the user is mid-edit on.
-  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  // The occurrence whose sheet is open, snapshotted at tap time — the sheet's
+  // form and its last-write-wins `expectedUpdatedAt` both come from this
+  // snapshot, not from `optimistic`, so a background change to the row while
+  // the sheet is open can't silently rewrite fields the user is mid-edit on.
+  // Carrying the whole `Occurrence` (not just its event) is what lets the
+  // sheet know *which* date of a recurring master was actually tapped.
+  const [editingOccurrence, setEditingOccurrence] = useState<Occurrence | null>(null);
 
   // Expansion happens here, not in a view: every view renders Occurrence[],
   // never raw CalendarEvent rows, so recurrence (PR 4) lights up for all of
-  // them at once with zero changes to this line or to any view. Identity
-  // expansion today — expandOccurrences passes non-recurring rows through
-  // as single occurrences equal to their own event.
+  // them at once with zero changes to this line or to any view. Both halves
+  // of the optimistic state feed expansion, so a still-saving exdate/override
+  // renders identically to a committed one.
   const occurrences = useMemo(
-    () => expandOccurrences(optimistic, exdates, windowFrom, windowTo),
-    [optimistic, exdates, windowFrom, windowTo],
+    () => expandOccurrences(optimistic.events, optimistic.exdates, windowFrom, windowTo),
+    [optimistic, windowFrom, windowTo],
   );
   const [selectedViewId, setSelectedViewId] = useSelectedView();
   const SelectedView =
@@ -105,6 +182,10 @@ export function CalendarEvents({
   const [colour, setColour] = useState<string | null>(null);
   const [attendeeIds, setAttendeeIds] = useState<string[] | null>(null);
   const [notes, setNotes] = useState("");
+  const [repeatFreq, setRepeatFreq] = useState<RepeatFreq | null>(null);
+  const [repeatInterval, setRepeatInterval] = useState(1);
+  const [repeatWeekdays, setRepeatWeekdays] = useState<number[] | null>(null);
+  const [repeatUntil, setRepeatUntil] = useState("");
 
   function run(
     action: Action,
@@ -126,14 +207,14 @@ export function CalendarEvents({
   // add-form error still showing when the sheet opens, or a sheet error
   // still showing under the list after it closes — so both open and close
   // clear it explicitly rather than relying on the next `run()` call to.
-  function openEventSheet(event: CalendarEvent) {
+  function openEventSheet(occurrence: Occurrence) {
     setError(null);
-    setEditingEvent(event);
+    setEditingOccurrence(occurrence);
   }
 
   function closeEventSheet() {
     setError(null);
-    setEditingEvent(null);
+    setEditingOccurrence(null);
   }
 
   function onAdd(e: React.FormEvent) {
@@ -152,6 +233,10 @@ export function CalendarEvents({
       colour,
       attendeeIds,
       notes: notes.trim() || null,
+      repeatFreq,
+      repeatInterval,
+      repeatWeekdays,
+      repeatUntil: repeatUntil || null,
     };
     const temp: CalendarEvent = {
       id: crypto.randomUUID(),
@@ -160,6 +245,8 @@ export function CalendarEvents({
       createdById: null,
       createdAt: new Date(),
       updatedAt: new Date(),
+      seriesId: null,
+      originalDate: null,
       ...fields,
     };
 
@@ -174,6 +261,10 @@ export function CalendarEvents({
     setColour(null);
     setAttendeeIds(null);
     setNotes("");
+    setRepeatFreq(null);
+    setRepeatInterval(1);
+    setRepeatWeekdays(null);
+    setRepeatUntil("");
     run({ type: "add", event: temp }, () => addCalendarEvent(fields));
 
     // An add outside the loaded window would otherwise vanish with no
@@ -328,6 +419,108 @@ export function CalendarEvents({
             </div>
           )}
 
+          {/*
+            Repeat control: kept collapsed/simple per the mobile-first rule —
+            a single select, plus an interval stepper, weekday chips and an
+            optional end date only once a frequency is actually chosen.
+            Duplicated (not imported) in event-sheet.tsx's extension region,
+            same reason as inputClass/chipClass above — the two client
+            components would otherwise form an import cycle.
+          */}
+          <div>
+            <p className="mb-1.5 text-xs text-zinc-500">Repeat</p>
+            <select
+              value={repeatFreq ?? "none"}
+              onChange={(e) =>
+                setRepeatFreq(
+                  e.target.value === "none" ? null : (e.target.value as RepeatFreq),
+                )
+              }
+              className={`w-full ${inputClass}`}
+              aria-label="Repeat"
+            >
+              <option value="none">Doesn&apos;t repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+
+            {repeatFreq && (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-xs text-zinc-500">Every</span>
+                  <button
+                    type="button"
+                    onClick={() => setRepeatInterval((n) => Math.max(1, n - 1))}
+                    aria-label="Decrease interval"
+                    className="rounded-full border border-black/10 px-2 py-0.5 dark:border-white/15"
+                  >
+                    –
+                  </button>
+                  <span className="w-6 text-center tabular-nums">{repeatInterval}</span>
+                  <button
+                    type="button"
+                    onClick={() => setRepeatInterval((n) => Math.min(99, n + 1))}
+                    aria-label="Increase interval"
+                    className="rounded-full border border-black/10 px-2 py-0.5 dark:border-white/15"
+                  >
+                    +
+                  </button>
+                  <span className="text-xs text-zinc-500">{REPEAT_UNIT_LABEL[repeatFreq]}</span>
+                </div>
+
+                {repeatFreq === "weekly" && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {WEEKDAY_LABELS.map(({ day, short, label }) => (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() =>
+                          setRepeatWeekdays((days) => {
+                            const set = new Set(days ?? []);
+                            if (set.has(day)) set.delete(day);
+                            else set.add(day);
+                            return set.size ? [...set].sort((a, b) => a - b) : null;
+                          })
+                        }
+                        className={chipClass((repeatWeekdays ?? []).includes(day))}
+                        aria-label={label}
+                        aria-pressed={(repeatWeekdays ?? []).includes(day)}
+                      >
+                        {short}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {(repeatFreq === "monthly" || repeatFreq === "yearly") && (
+                  // ADR 0007: a day that doesn't exist in every cycle (the
+                  // 31st; 29 Feb) is skipped outright rather than shifted —
+                  // a real surprise worth calling out here rather than
+                  // leaving someone to notice the gap on their own.
+                  <p className="text-xs text-zinc-500">
+                    {repeatFreq === "monthly"
+                      ? "A month without this day (e.g. the 31st) is skipped, not shifted."
+                      : "A date that only exists in some years (29 Feb) fires only in those years."}
+                  </p>
+                )}
+
+                <label className="block text-xs text-zinc-500">
+                  Until (optional)
+                  <input
+                    type="date"
+                    value={repeatUntil}
+                    onChange={(e) => setRepeatUntil(e.target.value)}
+                    min={startDate || undefined}
+                    className={`mt-1 w-full ${inputClass}`}
+                    aria-label="Repeat until"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
           <button
             type="submit"
             className="flex items-center gap-1 rounded-lg bg-foreground px-3 py-2 text-sm text-background"
@@ -353,13 +546,18 @@ export function CalendarEvents({
         onOccurrenceClick={openEventSheet}
       />
 
-      {editingEvent && (
+      {editingOccurrence && (
         <EventSheet
-          event={editingEvent}
+          occurrence={editingOccurrence}
           members={members}
           error={error}
           onClose={closeEventSheet}
           onSave={(optimisticEvent, input, expectedUpdatedAt) => {
+            // Whole-row edit: a plain event's ordinary save, an override
+            // row's own save, or a recurring master's "whole series" save
+            // (recurrence fields included) — in every case there is exactly
+            // one row to update, and expandOccurrences derives every
+            // occurrence from it at read time.
             run({ type: "edit", event: optimisticEvent }, async () => {
               const result = await updateCalendarEvent(
                 optimisticEvent.id,
@@ -374,6 +572,26 @@ export function CalendarEvents({
               return {};
             });
           }}
+          onSaveOccurrence={(optimisticOverride, input) => {
+            // "This event only" on a recurring master: the master gains an
+            // exdate for the tapped date and a standalone override row
+            // appears at once, mirroring editOccurrence's own two inserts.
+            const masterId = editingOccurrence.event.id;
+            const date = editingOccurrence.date;
+            run(
+              {
+                type: "addOverride",
+                exdate: { eventId: masterId, date },
+                event: optimisticOverride,
+              },
+              async () => {
+                const result = await editOccurrence(masterId, date, input);
+                if (result.error) return { error: result.error };
+                closeEventSheet();
+                return {};
+              },
+            );
+          }}
           onTogglePinned={(id, pinned) => {
             run({ type: "pin", id, pinned }, async () => {
               // togglePinned's own update also bumps updated_at (Drizzle's
@@ -383,17 +601,40 @@ export function CalendarEvents({
               // expectedUpdatedAt and always trip the last-write-wins guard.
               const result = await togglePinned(id, pinned);
               if (result) {
-                setEditingEvent((prev) =>
-                  prev && prev.id === id
-                    ? { ...prev, pinned, updatedAt: result.updatedAt }
+                setEditingOccurrence((prev) =>
+                  prev && prev.event.id === id
+                    ? { ...prev, event: { ...prev.event, pinned, updatedAt: result.updatedAt } }
                     : prev,
                 );
               }
             });
           }}
           onDelete={(id) => {
+            // Whole-row delete: a plain/override row's ordinary delete, or a
+            // recurring master's "whole series" delete. The server-side
+            // operation is the same statement either way (deleteSeries is
+            // deleteCalendarEvent under the FK cascade), but the optimistic
+            // reducer action differs so a master's stray override rows and
+            // exdates are cleaned out of local state immediately rather than
+            // waiting for the next full reload.
             closeEventSheet();
-            run({ type: "delete", id }, () => deleteCalendarEvent(id));
+            const isMaster = Boolean(editingOccurrence.event.repeatFreq);
+            if (isMaster) {
+              run({ type: "deleteSeries", eventId: id }, () => deleteSeries(id));
+            } else {
+              run({ type: "delete", id }, () => deleteCalendarEvent(id));
+            }
+          }}
+          onDeleteOccurrence={(date) => {
+            // "This event only" delete on a recurring master: suppress just
+            // this date with an exdate, leaving the master and every other
+            // occurrence untouched.
+            closeEventSheet();
+            const masterId = editingOccurrence.event.id;
+            run(
+              { type: "addExdate", eventId: masterId, date },
+              () => deleteOccurrence(masterId, date),
+            );
           }}
         />
       )}

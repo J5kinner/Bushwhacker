@@ -2,7 +2,6 @@
 
 import { useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
-import type { CalendarEvent } from "@/db/schema";
 import type { Occurrence } from "@/lib/recurrence";
 import type { HouseholdMember } from "@/lib/queries";
 import { Agenda } from "./agenda";
@@ -14,6 +13,13 @@ import { MonthGrid } from "./month-grid";
  * e.g. a future Day view may not use `anchorMonth`), so adding an entry to
  * VIEWS below is the only thing a new view has to do to plug in; nothing in
  * calendar-events.tsx (which builds this object) has to change per-view.
+ *
+ * `onOccurrenceClick` takes the whole tapped `Occurrence` (event + date), not
+ * just its event, so the sheet it opens (calendar-events.tsx) knows *which*
+ * occurrence of a recurring master was tapped — required for the this-vs-
+ * series choice PR 4 adds. A non-recurring row's occurrence carries its own
+ * event's own date, so this is a strict superset of the old event-only
+ * contract, not a behaviour change for anything that isn't recurring.
  */
 export interface CalendarViewProps {
   occurrences: Occurrence[];
@@ -21,7 +27,7 @@ export interface CalendarViewProps {
   windowFrom: string;
   windowTo: string;
   anchorMonth: string | null;
-  onOccurrenceClick: (event: CalendarEvent) => void;
+  onOccurrenceClick: (occurrence: Occurrence) => void;
 }
 
 export interface CalendarViewDefinition {

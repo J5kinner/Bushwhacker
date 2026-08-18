@@ -50,6 +50,13 @@
       "when": 1787040847545,
       "tag": "0006_damp_lifeguard",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787058011205,
+      "tag": "0007_wonderful_synch",
+      "breakpoints": true
     }
   ]
 }

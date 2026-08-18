@@ -4,7 +4,6 @@ import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addMonths, format, parseISO, subMonths } from "date-fns";
 import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
-import type { CalendarEvent } from "@/db/schema";
 import type { Occurrence } from "@/lib/recurrence";
 import type { HouseholdMember } from "@/lib/queries";
 import { eventColourHex } from "@/lib/event-colours";
@@ -105,7 +104,7 @@ function OccurrenceRow({
 }: {
   occurrence: Occurrence;
   members: HouseholdMember[];
-  onClick: (event: CalendarEvent) => void;
+  onClick: (occurrence: Occurrence) => void;
 }) {
   const { event } = occurrence;
   const colourHex = eventColourHex(event.colour);
@@ -137,11 +136,11 @@ function OccurrenceRow({
       <div
         role="button"
         tabIndex={0}
-        onClick={() => onClick(event)}
+        onClick={() => onClick(occurrence)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onClick(event);
+            onClick(occurrence);
           }
         }}
         className="min-w-0 flex-1 cursor-pointer text-left"
