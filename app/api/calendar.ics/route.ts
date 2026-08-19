@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { calendarEvents, eventExdates } from "@/db/schema";
 import { getHouseholdId } from "@/lib/household";
 import { buildCalendarFeed } from "@/lib/ics";
+import { measure, serverTimingHeader, type Timing } from "@/lib/timing";
 
 /**
  * Outbound ICS subscription feed (shared-calendar plan, PR 10): a native
@@ -63,28 +64,40 @@ export async function GET(request: Request) {
   // RRULE no matter how long it has been running, so there is nothing here
   // that grows the way an expanded occurrence list would.
   const db = getDb();
-  const [events, exdates] = await Promise.all([
-    db.select().from(calendarEvents).where(eq(calendarEvents.householdId, householdId)),
-    // event_exdates carries no household_id of its own, so the join back to
-    // calendar_events is the household scope (same pattern as
-    // lib/queries.ts's selectCalendarWindow).
-    db
-      .select({ eventId: eventExdates.eventId, date: eventExdates.date })
-      .from(eventExdates)
-      .innerJoin(calendarEvents, eq(eventExdates.eventId, calendarEvents.id))
-      .where(eq(calendarEvents.householdId, householdId)),
-  ]);
+  const { result, timing } = await measure("feed-read", () =>
+    Promise.all([
+      db.select().from(calendarEvents).where(eq(calendarEvents.householdId, householdId)),
+      // event_exdates carries no household_id of its own, so the join back to
+      // calendar_events is the household scope.
+      db
+        .select({ eventId: eventExdates.eventId, date: eventExdates.date })
+        .from(eventExdates)
+        .innerJoin(calendarEvents, eq(eventExdates.eventId, calendarEvents.id))
+        .where(eq(calendarEvents.householdId, householdId)),
+    ]),
+  );
+  const [events, exdates] = result;
 
-  return icsResponse(buildCalendarFeed(events, exdates));
+  const { result: ics, timing: buildTiming } = await measure("feed-build", async () =>
+    buildCalendarFeed(events, exdates),
+  );
+
+  return icsResponse(ics, [timing, buildTiming]);
 }
 
-function icsResponse(ics: string): Response {
+/**
+ * Timings are attached on the success path only: a Server-Timing header on the
+ * 404 above would confirm something real sits behind the URL, undoing the
+ * indistinguishability that response is chosen for.
+ */
+function icsResponse(ics: string, timings: Timing[] = []): Response {
   return new Response(ics, {
     status: 200,
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": 'inline; filename="homesync.ics"',
       "Cache-Control": "private, max-age=300",
+      ...(timings.length ? { "Server-Timing": serverTimingHeader(timings) } : {}),
     },
   });
 }
