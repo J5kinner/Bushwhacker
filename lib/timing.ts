@@ -4,7 +4,7 @@
  * Speed Insights measures the browser, so it can say a route has a bad TTFB
  * but never that a particular Neon read is why. Vercel's answer to that is
  * OpenTelemetry via Drains, which is Pro-and-above; this is the free
- * equivalent. See ADR 0008.
+ * equivalent. See ADR 0011.
  *
  * Only slow reads are logged, and never with their arguments — a household id
  * or date window is household data, and the operation name alone locates the

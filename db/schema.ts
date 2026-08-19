@@ -503,6 +503,44 @@ export const userLocations = pgTable("user_locations", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+/**
+ * Our own record of Core Web Vitals, kept because Vercel's is not durable:
+ * Speed Insights retains 7 days on Hobby, has no read API, and Drains are
+ * Pro-and-above. This table is the long-term trend line. See ADR 0011.
+ *
+ * Not scoped to a household or a user. The rows describe how the app performed
+ * on a device, not what anybody did with it, and joining them to a member would
+ * turn a performance log into a browsing history for no analytical gain.
+ */
+export const webVitals = pgTable(
+  "web_vitals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Resolved route such as "/shopping", never a raw URL with query or ids. */
+    route: text("route").notNull(),
+    /** LCP, CLS, INP, FCP or TTFB. */
+    metric: text("metric").notNull(),
+    /** Milliseconds, except CLS which is a unitless ratio. */
+    value: doublePrecision("value").notNull(),
+    rating: text("rating").notNull(),
+    /** Coarse form factor only, so the number can be read per device class. */
+    deviceType: text("device_type"),
+    recordedAt: timestamp("recorded_at").defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "web_vitals_metric_known",
+      sql`${table.metric} in ('LCP', 'CLS', 'INP', 'FCP', 'TTFB')`,
+    ),
+    check(
+      "web_vitals_rating_known",
+      sql`${table.rating} in ('good', 'needs-improvement', 'poor')`,
+    ),
+    check("web_vitals_value_finite", sql`${table.value} >= 0`),
+    index("web_vitals_report_idx").on(table.recordedAt, table.route, table.metric),
+  ],
+);
+
 export type ShoppingItem = typeof shoppingItems.$inferSelect;
 export type Recipe = typeof recipes.$inferSelect;
 export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
@@ -518,3 +556,4 @@ export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type UserLocation = typeof userLocations.$inferSelect;
+export type WebVital = typeof webVitals.$inferSelect;
