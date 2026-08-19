@@ -98,16 +98,18 @@ export const BANDS: readonly ProximityBand[] = [
 ];
 
 /**
- * A fix older than this stops being treated as a live reading.
+ * A fix older than this stops counting as a live reading, and the meter says so
+ * in its caption. It no longer withholds the reading itself: in practice a
+ * phone reports far less often than this, so an age-based grey-out was on
+ * permanently and signalled nothing.
  *
  * Fifteen minutes matches the interval an OwnTracks phone in significant-change
- * mode can comfortably beat while stationary, so a normally-working setup is
- * never wrongly marked stale.
+ * mode can comfortably beat while stationary.
  */
 export const STALE_AFTER_MS = 15 * 60 * 1000;
 
 /** Why a reading is not trustworthy, or null when it is. */
-export type Doubt = "stale" | "imprecise";
+export type Doubt = "imprecise";
 
 export interface ProximityReading {
   distanceM: number;
@@ -116,13 +118,13 @@ export interface ProximityReading {
    * Null when the reading can be believed. Otherwise the reason it cannot, and
    * the meter greys out rather than asserting a temperature:
    *
-   * - `stale` — one of the fixes is old, so "together" would describe where
-   *   somebody *was*, which is exactly the lie this feature could tell most
-   *   easily.
    * - `imprecise` — the senders' combined error is wider than the whole band
    *   the distance landed in, so we cannot honestly place them in it. A
    *   wifi-derived fix is routinely accurate to a kilometre or two, which
    *   swallows the three warmest bands whole.
+   *
+   * Age is deliberately not a reason. It is reported as an "as of" caption
+   * instead — see STALE_AFTER_MS.
    *
    * Note the error is weighed against the band's own scale, not against the raw
    * distance. Comparing it to the distance would make "together" unreachable:
@@ -165,29 +167,16 @@ export function bandForDistance(distanceM: number): ProximityBand {
 
 /**
  * The proximity reading for two members' fixes, including whether it can be
- * believed. `now` is injectable so the staleness rule is testable.
+ * believed.
  */
-export function resolveProximity(
-  a: MemberFix,
-  b: MemberFix,
-  now: Date = new Date(),
-): ProximityReading {
+export function resolveProximity(a: MemberFix, b: MemberFix): ProximityReading {
   const distanceM = distanceBetween(a, b);
   const band = bandForDistance(distanceM);
   const measuredAt = a.capturedAt <= b.capturedAt ? a.capturedAt : b.capturedAt;
 
-  const oldestAgeMs = now.getTime() - measuredAt.getTime();
   const combinedErrorM = (a.accuracyM ?? 0) + (b.accuracyM ?? 0);
-
-  // Staleness is reported ahead of imprecision: an old fix is the more
-  // misleading of the two, and it is the one a person can actually act on by
-  // opening the app.
   const doubt: Doubt | null =
-    oldestAgeMs > STALE_AFTER_MS
-      ? "stale"
-      : combinedErrorM > band.maxDistanceM
-        ? "imprecise"
-        : null;
+    combinedErrorM > band.maxDistanceM ? "imprecise" : null;
 
   return { distanceM, band, doubt, measuredAt };
 }

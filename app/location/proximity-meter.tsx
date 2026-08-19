@@ -4,6 +4,7 @@ import type { MemberLocation } from "@/lib/queries";
 import {
   resolveProximity,
   formatDistance,
+  STALE_AFTER_MS,
   type MemberFix,
 } from "@/lib/proximity";
 
@@ -36,12 +37,20 @@ function toFix(member: MemberLocation): MemberFix | null {
 
 /** Wording for a reading that cannot be believed, keyed by why. */
 const DOUBT_BLURB = {
-  stale: "Waiting on a fresher fix",
   imprecise: "Too fuzzy to call",
 } as const;
 
-function relativeAge(measuredAt: Date): string {
-  const minutes = Math.floor((Date.now() - measuredAt.getTime()) / 60_000);
+/**
+ * An "as of" caveat for a fix old enough to warrant one, or null while it is
+ * still live. The clock is read here rather than in the markup: the purity rule
+ * rightly objects to Date.now() during render, and the caption is refreshed by
+ * LiveRefresh revalidating the page anyway.
+ */
+function ageCaption(measuredAt: Date): string | null {
+  const ageMs = Date.now() - measuredAt.getTime();
+  if (ageMs <= STALE_AFTER_MS) return null;
+
+  const minutes = Math.floor(ageMs / 60_000);
   if (minutes < 60) return `${Math.max(1, minutes)} min ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
@@ -54,10 +63,13 @@ function relativeAge(measuredAt: Date): string {
  * the gap as the distance between the household's two phones shrinks, and fall
  * into an embrace once they are within a stone's throw.
  *
- * Greys out rather than guessing. A reading built on a stale or wide-error fix
- * still shows its band, but desaturated and captioned with the reason — the
- * failure this feature invites is confidently announcing "together" about where
- * somebody was an hour ago.
+ * Greys out rather than guessing when the senders' error is too wide to place
+ * them in a band: it still shows the band, but desaturated and captioned with
+ * the reason.
+ *
+ * Age does not grey it out. A phone reports rarely enough that nearly every
+ * reading was old, so the grey said "old" about everything and therefore about
+ * nothing. The age is stated in the caption instead.
  */
 export function ProximityMeter({ members }: { members: MemberLocation[] }) {
   const fixes = members.map(toFix).filter((fix): fix is MemberFix => fix !== null);
@@ -81,6 +93,7 @@ export function ProximityMeter({ members }: { members: MemberLocation[] }) {
   const reading = resolveProximity(fixes[0], fixes[1]);
   const { band, doubt, distanceM, measuredAt } = reading;
   const together = band.key === "together" && doubt === null;
+  const age = ageCaption(measuredAt);
 
   // Warmth drives the gap: touching at the top of the scale, wide apart at the
   // bottom. Percent of half the track, so the pair stays centred throughout.
@@ -141,7 +154,7 @@ export function ProximityMeter({ members }: { members: MemberLocation[] }) {
 
       <p className="mt-1 text-center text-xs text-zinc-500">
         {formatDistance(distanceM)} apart
-        {doubt === "stale" && ` · as of ${relativeAge(measuredAt)}`}
+        {age && ` · as of ${age}`}
       </p>
     </div>
   );
