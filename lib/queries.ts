@@ -2,12 +2,14 @@ import { unstable_cache } from "next/cache";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { Session } from "next-auth";
 import { getDb } from "@/db";
-import type { CalendarEvent } from "@/db/schema";
+import type { Activity, CalendarEvent, EventComment } from "@/db/schema";
 import {
   shoppingItems,
   shoppingCategories,
   calendarEvents,
   eventExdates,
+  eventComments,
+  activity,
   chores,
   recipes,
   users,
@@ -33,6 +35,8 @@ export const CACHE_TAGS = {
   // Nothing in-app mutates a user row today, so nothing busts this tag yet —
   // it exists for correctness if that ever changes, not because it is needed now.
   users: "users",
+  eventComments: "event-comments",
+  activity: "activity",
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -198,6 +202,81 @@ export async function getCalendarWindow(
     ["calendar-window", householdId, from, to],
     { tags: [CACHE_TAGS.calendarEvents] },
   )();
+}
+
+const fetchEventComments = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select({
+        id: eventComments.id,
+        eventId: eventComments.eventId,
+        authorId: eventComments.authorId,
+        body: eventComments.body,
+        createdAt: eventComments.createdAt,
+      })
+      .from(eventComments)
+      // event_comments carries no household_id of its own, so the join back
+      // to calendar_events is the household scope — same pattern as the
+      // exdates join in selectCalendarWindow above.
+      .innerJoin(calendarEvents, eq(eventComments.eventId, calendarEvents.id))
+      .where(eq(calendarEvents.householdId, householdId))
+      .orderBy(asc(eventComments.createdAt)),
+  ["event-comments"],
+  { tags: [CACHE_TAGS.eventComments] },
+);
+
+/**
+ * Every comment on this household's events, oldest first. Comments flow
+ * through server-rendered props rather than a one-shot client fetch (design
+ * decision 5 of the shared-calendar plan), so the 15s LiveRefresh poll keeps
+ * an open thread current the same way every other cached read does.
+ * Filtering down to one event's slice happens client-side
+ * (app/calendar/calendar-events.tsx) — the household's whole comment history
+ * is a small, single cached read, not worth a query per event.
+ */
+export async function getEventComments(): Promise<EventComment[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchEventComments(householdId);
+}
+
+const fetchActivity = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select()
+      .from(activity)
+      .where(eq(activity.householdId, householdId))
+      .orderBy(desc(activity.createdAt))
+      .limit(50),
+  ["activity"],
+  { tags: [CACHE_TAGS.activity] },
+);
+
+/** The household's latest ~50 activity rows, newest first. */
+export async function getActivity(): Promise<Activity[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchActivity(householdId);
+}
+
+/**
+ * The signed-in member's own `activity_seen_at`, read directly rather than
+ * through `unstable_cache`. `getActivity` above is cached per household and
+ * shared by both members, so baking either partner's seen state into it
+ * would leak one partner's read state into the other's badge (design
+ * decision 5 of the shared-calendar plan) — this small, uncached row lookup
+ * is the deliberate exception. The caller (app/calendar/page.tsx) combines
+ * this with the cached activity rows to compute the unread count itself.
+ */
+export async function getCurrentUserActivitySeenAt(): Promise<Date | null> {
+  const userId = await getCurrentUserId();
+  if (!userId) return null;
+  const [row] = await getDb()
+    .select({ activitySeenAt: users.activitySeenAt })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row?.activitySeenAt ?? null;
 }
 
 const fetchChores = unstable_cache(

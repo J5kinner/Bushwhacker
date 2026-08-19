@@ -55,6 +55,15 @@ export const users = pgTable("users", {
   /** Whether this member sees the app in its dark colour scheme. */
   darkMode: boolean("dark_mode").notNull().default(false),
 
+  /**
+   * The last time this member viewed the activity feed, stamped as the max
+   * `created_at` of the rows they actually saw rendered — never `now()` (see
+   * markActivitySeen, app/calendar/actions.ts) — so a row that arrives
+   * between the client's fetch and the tap that marks it seen stays unseen.
+   * Null means the feed has never been opened.
+   */
+  activitySeenAt: timestamp("activity_seen_at"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -238,6 +247,68 @@ export const eventExdates = pgTable(
 );
 
 /**
+ * A comment thread on one calendar event (PR 7's "event comments" — text
+ * only, deliberately not "chat": push notifications, not typing indicators
+ * or read receipts, provide the immediacy). Cascades with its event, unlike
+ * `activity` below — a comment has no meaning once the thing it comments on
+ * is gone, whereas the activity feed's whole point is to survive the event.
+ */
+export const eventComments = pgTable("event_comments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  eventId: uuid("event_id")
+    .notNull()
+    .references(() => calendarEvents.id, { onDelete: "cascade" }),
+  authorId: uuid("author_id").references(() => users.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+/**
+ * Append-only feed of who did what to which event (ADR 0008). Every
+ * mutating calendar Server Action (app/calendar/actions.ts) writes one row
+ * here in addition to its usual work, so "who created/edited/deleted/
+ * commented on this, and when" survives independently of the event's own
+ * current — or since-deleted — state.
+ *
+ * `eventId` is deliberately a plain uuid with NO foreign key: a deleted
+ * event (or a cascade-deleted recurrence override) must not take its own
+ * history down with it, which an `onDelete: "cascade"` FK would do, and
+ * `onDelete: "set null"` would erase which event a row was ever about either
+ * way. `eventTitle` is a snapshot taken at write time for the identical
+ * reason — the feed still needs a name to show for an event that no longer
+ * has a row to read one from.
+ */
+export const activity = pgTable(
+  "activity",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    actorId: uuid("actor_id").references(() => users.id),
+    verb: text("verb", {
+      enum: ["created", "updated", "deleted", "commented"],
+    }).notNull(),
+    eventId: uuid("event_id"),
+    eventTitle: text("event_title").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    // The feed read is always "this household's latest rows, newest first"
+    // (getActivity, lib/queries.ts) — this composite index serves that
+    // access path directly instead of a full-table scan plus sort.
+    index("activity_household_created_idx").on(t.householdId, t.createdAt),
+    // Same reasoning as calendar_events_repeat_freq_valid above: Drizzle's
+    // `{ enum: [...] }` is TypeScript-only, so this is the DB-level backstop
+    // for a write that ever bypasses the server actions' own validation.
+    check(
+      "activity_verb_valid",
+      sql`${t.verb} in ('created', 'updated', 'deleted', 'commented')`,
+    ),
+  ],
+);
+
+/**
  * Recurring household chores, each carrying a Chore Cognitive Load Index.
  * Raw CLI inputs are stored (not just the derived score/band) so the weights in
  * lib/chore-load.ts can be re-tuned without re-surveying the household.
@@ -322,6 +393,8 @@ export type Recipe = typeof recipes.$inferSelect;
 export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type EventExdate = typeof eventExdates.$inferSelect;
+export type EventComment = typeof eventComments.$inferSelect;
+export type Activity = typeof activity.$inferSelect;
 export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type UserLocation = typeof userLocations.$inferSelect;

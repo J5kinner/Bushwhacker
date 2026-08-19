@@ -3,10 +3,37 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { getDb } from "@/db";
-import { calendarEvents, eventExdates } from "@/db/schema";
+import { activity, calendarEvents, eventComments, eventExdates, users } from "@/db/schema";
 import { getHouseholdId, getCurrentUserId } from "@/lib/household";
 import { CACHE_TAGS, getHouseholdMembers } from "@/lib/queries";
 import { isEventColour } from "@/lib/event-colours";
+
+const MAX_COMMENT_LENGTH = 1000;
+
+type ActivityVerb = "created" | "updated" | "deleted" | "commented";
+
+/**
+ * Records one row in the append-only activity feed (ADR 0008). Best-effort
+ * by design: the calling mutation has already committed by the time this
+ * runs, so a transient failure here must not fail the whole action and hand
+ * the caller an error over a change that in fact succeeded — the trade-off
+ * is a feed that can silently miss an entry on the rare write that itself
+ * fails, which is strictly better than a false failure on a save that
+ * worked.
+ */
+async function recordActivity(params: {
+  householdId: string;
+  actorId: string | null;
+  verb: ActivityVerb;
+  eventId: string;
+  eventTitle: string;
+}) {
+  try {
+    await getDb().insert(activity).values(params);
+  } catch {
+    // Best-effort — see the doc comment above.
+  }
+}
 
 const REPEAT_FREQUENCIES = ["daily", "weekly", "monthly", "yearly"] as const;
 type RepeatFreq = (typeof REPEAT_FREQUENCIES)[number];
@@ -184,10 +211,23 @@ export async function addCalendarEvent(
   if (!result.ok) return { error: result.reason };
   const createdById = await getCurrentUserId();
 
-  await getDb()
+  const [inserted] = await getDb()
     .insert(calendarEvents)
-    .values({ ...result.fields, householdId, createdById });
+    .values({ ...result.fields, householdId, createdById })
+    .returning({ id: calendarEvents.id });
   updateTag(CACHE_TAGS.calendarEvents);
+
+  if (inserted) {
+    await recordActivity({
+      householdId,
+      actorId: createdById,
+      verb: "created",
+      eventId: inserted.id,
+      eventTitle: result.fields.title,
+    });
+    updateTag(CACHE_TAGS.activity);
+  }
+
   return {};
 }
 
@@ -250,21 +290,50 @@ export async function updateCalendarEvent(
     .returning({ id: calendarEvents.id });
 
   updateTag(CACHE_TAGS.calendarEvents);
+
+  if (updated.length > 0) {
+    const actorId = await getCurrentUserId();
+    await recordActivity({
+      householdId,
+      actorId,
+      verb: "updated",
+      eventId: id,
+      eventTitle: fields.title,
+    });
+    updateTag(CACHE_TAGS.activity);
+  }
+
   return { conflict: updated.length === 0 };
 }
 
 export async function deleteCalendarEvent(id: string) {
   const householdId = await getHouseholdId();
   if (!householdId) return;
-  await getDb()
+  // `returning` the title before it's gone, rather than a separate SELECT
+  // first — one statement either way, and it doubles as the "did this
+  // household actually own that id" check the activity write below needs.
+  const [deleted] = await getDb()
     .delete(calendarEvents)
     .where(
       and(
         eq(calendarEvents.id, id),
         eq(calendarEvents.householdId, householdId),
       ),
-    );
+    )
+    .returning({ title: calendarEvents.title });
   updateTag(CACHE_TAGS.calendarEvents);
+
+  if (deleted) {
+    const actorId = await getCurrentUserId();
+    await recordActivity({
+      householdId,
+      actorId,
+      verb: "deleted",
+      eventId: id,
+      eventTitle: deleted.title,
+    });
+    updateTag(CACHE_TAGS.activity);
+  }
 }
 
 /**
@@ -277,6 +346,12 @@ export async function deleteCalendarEvent(id: string) {
  * would always trip `updateCalendarEvent`'s last-write-wins guard even
  * though nobody else touched the row. Null means nothing matched (no
  * household, or the event isn't this household's).
+ *
+ * Deliberately writes NO activity row (unlike every other mutation in this
+ * file) — the cache-tag matrix (design decision 6) calls this out
+ * explicitly: a pin/unpin is a personal triage flag flipped often and in
+ * passing, and logging every toggle would swamp the feed with noise nobody
+ * asked to see "who pinned/unpinned this" for.
  */
 export async function togglePinned(
   id: string,
@@ -307,10 +382,13 @@ export async function togglePinned(
  * an override row and either suppress it outright (no exdate applies to a
  * non-recurring row) or spawn an override-of-an-override, neither of which
  * `expandOccurrences` is built to represent.
+ *
+ * Selects `title` alongside `id` so `deleteOccurrence`/`editOccurrence` can
+ * snapshot it straight into their own activity row without a second lookup.
  */
 async function findOwnedMaster(householdId: string, eventId: string) {
   const [master] = await getDb()
-    .select({ id: calendarEvents.id })
+    .select({ id: calendarEvents.id, title: calendarEvents.title })
     .from(calendarEvents)
     .where(
       and(
@@ -337,10 +415,26 @@ async function findOwnedMaster(householdId: string, eventId: string) {
 export async function deleteOccurrence(eventId: string, date: string): Promise<void> {
   const householdId = await getHouseholdId();
   if (!householdId) return;
-  if (!(await findOwnedMaster(householdId, eventId))) return;
+  const master = await findOwnedMaster(householdId, eventId);
+  if (!master) return;
 
   await getDb().insert(eventExdates).values({ eventId, date }).onConflictDoNothing();
   updateTag(CACHE_TAGS.calendarEvents);
+
+  // Mapped to "updated", not a dedicated occurrence-level verb: from the
+  // feed's point of view an occurrence isn't an independent thing, it's one
+  // date of the series, so suppressing it reads as a change to the series
+  // (the cache-tag matrix, design decision 6) — logged against the master's
+  // own id/title, not a synthetic id for the suppressed date.
+  const actorId = await getCurrentUserId();
+  await recordActivity({
+    householdId,
+    actorId,
+    verb: "updated",
+    eventId: master.id,
+    eventTitle: master.title,
+  });
+  updateTag(CACHE_TAGS.activity);
 }
 
 /**
@@ -381,7 +475,8 @@ export async function editOccurrence(
 ): Promise<{ error?: string }> {
   const householdId = await getHouseholdId();
   if (!householdId) return {};
-  if (!(await findOwnedMaster(householdId, eventId))) return {};
+  const master = await findOwnedMaster(householdId, eventId);
+  if (!master) return {};
 
   const result = await normaliseEventInput(input);
   if (!result.ok) return { error: result.reason };
@@ -432,6 +527,20 @@ export async function editOccurrence(
   }
 
   updateTag(CACHE_TAGS.calendarEvents);
+
+  // Mapped to "updated" against the master's own id/title, same reasoning
+  // as deleteOccurrence above — a series is the unit the feed talks about,
+  // and the newly-saved title (not the master's, which this write never
+  // touches) is what actually changed.
+  await recordActivity({
+    householdId,
+    actorId: createdById,
+    verb: "updated",
+    eventId: master.id,
+    eventTitle: result.fields.title,
+  });
+  updateTag(CACHE_TAGS.activity);
+
   return {};
 }
 
@@ -441,7 +550,75 @@ export async function editOccurrence(
  * `calendar_events.series_id` (both `onDelete: "cascade"`, see db/schema.ts)
  * take every override row and every exdate down with it in the same
  * statement, so deleting the series is just deleting the master.
+ *
+ * Delegating straight to `deleteCalendarEvent` also means "deleted" activity
+ * is logged exactly once, against the master — the cascaded override rows
+ * (if the series ever had any) get no activity rows of their own, matching
+ * the cache-tag matrix's single `deleteCalendarEvent`/`deleteSeries →
+ * "deleted"` mapping rather than one row per override.
  */
 export async function deleteSeries(eventId: string): Promise<void> {
   await deleteCalendarEvent(eventId);
+}
+
+/**
+ * Adds a comment to an event's thread (PR 7's "event comments" — text only,
+ * deliberately not "chat"). The event is re-checked against this household
+ * before anything is written, the same defence-in-depth every other action
+ * here applies to its own `id` argument: a stale or foreign id must not
+ * create an orphaned comment/activity pair for an event the caller can't
+ * even see.
+ */
+export async function addComment(
+  eventId: string,
+  body: string,
+): Promise<{ error?: string }> {
+  const trimmed = body.trim();
+  if (!trimmed) return { error: "Comment can't be empty." };
+  if (trimmed.length > MAX_COMMENT_LENGTH) {
+    return { error: `Comments are capped at ${MAX_COMMENT_LENGTH} characters.` };
+  }
+
+  const householdId = await getHouseholdId();
+  if (!householdId) return {};
+
+  const [event] = await getDb()
+    .select({ id: calendarEvents.id, title: calendarEvents.title })
+    .from(calendarEvents)
+    .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.householdId, householdId)))
+    .limit(1);
+  if (!event) return { error: "This event no longer exists." };
+
+  const authorId = await getCurrentUserId();
+  await getDb().insert(eventComments).values({ eventId, authorId, body: trimmed });
+  updateTag(CACHE_TAGS.eventComments);
+
+  await recordActivity({
+    householdId,
+    actorId: authorId,
+    verb: "commented",
+    eventId,
+    eventTitle: event.title,
+  });
+  updateTag(CACHE_TAGS.activity);
+
+  return {};
+}
+
+/**
+ * Marks the activity feed "seen" up to `latestCreatedAt` — the max
+ * `created_at` of the rows the client actually rendered when it opened the
+ * feed, deliberately NOT `now()`: a row that lands between the client's
+ * fetch and the tap that calls this must stay unseen, which stamping the
+ * current instant would wrongly clear (design decision 5 of the
+ * shared-calendar plan). Busts the activity tag so every reader's next
+ * render recomputes the badge against the new `activity_seen_at` — cheap,
+ * since `getCurrentUserActivitySeenAt` (lib/queries.ts) was never cached in
+ * the first place.
+ */
+export async function markActivitySeen(latestCreatedAt: Date): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) return;
+  await getDb().update(users).set({ activitySeenAt: latestCreatedAt }).where(eq(users.id, userId));
+  updateTag(CACHE_TAGS.activity);
 }
