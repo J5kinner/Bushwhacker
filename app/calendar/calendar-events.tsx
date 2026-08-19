@@ -252,6 +252,15 @@ export function CalendarEvents({
    * inside one `startTransition`, the same shape `run` uses above: the
    * badge clears at once, and the eventual server read (once the action's
    * `updateTag(activity)` lands) reconciles `unseenCount` for real.
+   *
+   * Unlike `run`, a failure here doesn't set the shared `error` banner:
+   * `markActivitySeen` is itself best-effort (app/calendar/actions.ts), so
+   * the client side of the same call matches that semantic rather than
+   * surfacing a visible error over what the user experiences as merely
+   * opening a read-only feed — worst case the badge reappears on the next
+   * server read, which is annoying, never wrong. The try/catch exists so a
+   * network failure (this call, unlike the action's own DB write, can still
+   * throw) doesn't escape this transition as an unhandled rejection.
    */
   function openActivityFeed() {
     setActivityFeedOpen(true);
@@ -259,7 +268,11 @@ export function CalendarEvents({
     if (!latest) return;
     startTransition(async () => {
       setOptimisticUnseenCount(0);
-      await markActivitySeen(latest);
+      try {
+        await markActivitySeen(latest);
+      } catch {
+        // Best-effort — see the doc comment above.
+      }
     });
   }
 
@@ -595,6 +608,10 @@ export function CalendarEvents({
           type="button"
           onClick={openActivityFeed}
           aria-label={
+            // The visible badge caps its digits at "9+" (below) so it never
+            // overflows its own circle, but the aria-label keeps the exact
+            // count — a screen reader has no rendering-width constraint to
+            // work around.
             optimisticUnseenCount > 0
               ? `Activity, ${optimisticUnseenCount} unseen`
               : "Activity"
@@ -607,7 +624,7 @@ export function CalendarEvents({
               aria-hidden
               className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-medium text-white"
             >
-              {optimisticUnseenCount}
+              {optimisticUnseenCount > 9 ? "9+" : optimisticUnseenCount}
             </span>
           )}
         </button>

@@ -49,13 +49,26 @@ const WEEK_MS = 7 * DAY_MS;
 /**
  * "Just now" / "5m ago" / "3h ago" / "2d ago" against `now`, falling back to
  * an absolute short date ("14 Aug") once a week has passed — so a thread or
- * feed that lives for months doesn't render an ever-growing "214d ago" — and
- * for the one render before `useDeviceNow` resolves (`now` is null), for
- * which an absolute date is also the only option that's stable between the
- * server's render and the client's first one.
+ * feed that lives for months doesn't render an ever-growing "214d ago".
+ *
+ * For the one render before `useDeviceNow` resolves (`now` is null), this
+ * returns an empty string rather than an absolute date — `date-fns`'
+ * `format` reads the `Date` object's LOCAL getters, which are the server's
+ * UTC clock during SSR (and the client's first, hydration-matching render)
+ * but the device's real zone once `now` resolves. For a comment/activity
+ * row whose UTC and Sydney calendar days differ (any time from midnight to
+ * ~11am AEST/10am AEDT), formatting during the null phase would render a
+ * different day server-side than the client's own later local-time format
+ * would — a genuine hydration text mismatch, not just a "diverges once,
+ * safely" resolution like `useDeviceNow`'s own null→real transition. An
+ * empty placeholder side-steps that entirely: it is identical output
+ * regardless of which zone computed it, and the real text appears on the
+ * very next client render once `now` resolves. Once `now` IS non-null this
+ * function only ever runs client-side (the server always hands back a null
+ * `now`), so the absolute-date fallback below is safe exactly as written.
  */
 export function formatRelativeTime(date: Date, now: Date | null): string {
-  if (now === null) return format(date, "d MMM");
+  if (now === null) return "";
   const diffMs = now.getTime() - date.getTime();
   if (diffMs < MINUTE_MS) return "Just now";
   if (diffMs < HOUR_MS) return `${Math.floor(diffMs / MINUTE_MS)}m ago`;

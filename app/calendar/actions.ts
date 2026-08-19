@@ -411,6 +411,14 @@ async function findOwnedMaster(householdId: string, eventId: string) {
  * the identical (eventId, date) row, so the second is a no-op rather than a
  * lost-update race on some other column (design decision 3 of the
  * shared-calendar plan).
+ *
+ * `calendar-events` is busted unconditionally (a second tap is still a
+ * legitimate re-render of an unchanged state, same as every other action
+ * here), but the activity write is gated on `inserted.length > 0`: without
+ * that gate, a double-tap (or a retried request) on an already-suppressed
+ * occurrence would insert nothing yet still log a phantom "updated" row and
+ * bust the activity tag for a no-op, unlike every sibling action in this
+ * file, which only logs when its own write actually changed something.
  */
 export async function deleteOccurrence(eventId: string, date: string): Promise<void> {
   const householdId = await getHouseholdId();
@@ -418,8 +426,14 @@ export async function deleteOccurrence(eventId: string, date: string): Promise<v
   const master = await findOwnedMaster(householdId, eventId);
   if (!master) return;
 
-  await getDb().insert(eventExdates).values({ eventId, date }).onConflictDoNothing();
+  const inserted = await getDb()
+    .insert(eventExdates)
+    .values({ eventId, date })
+    .onConflictDoNothing()
+    .returning({ eventId: eventExdates.eventId });
   updateTag(CACHE_TAGS.calendarEvents);
+
+  if (inserted.length === 0) return;
 
   // Mapped to "updated", not a dedicated occurrence-level verb: from the
   // feed's point of view an occurrence isn't an independent thing, it's one
@@ -615,10 +629,21 @@ export async function addComment(
  * render recomputes the badge against the new `activity_seen_at` — cheap,
  * since `getCurrentUserActivitySeenAt` (lib/queries.ts) was never cached in
  * the first place.
+ *
+ * Best-effort, same trade-off as `recordActivity` above: the client has
+ * already optimistically cleared its own badge by the time this runs
+ * (calendar-events.tsx), so a transient failure here just means the badge
+ * reappears on the next server read instead of staying cleared — annoying,
+ * never wrong, and not worth surfacing as a visible error over what the
+ * user experiences as merely opening a read-only feed.
  */
 export async function markActivitySeen(latestCreatedAt: Date): Promise<void> {
   const userId = await getCurrentUserId();
   if (!userId) return;
-  await getDb().update(users).set({ activitySeenAt: latestCreatedAt }).where(eq(users.id, userId));
-  updateTag(CACHE_TAGS.activity);
+  try {
+    await getDb().update(users).set({ activitySeenAt: latestCreatedAt }).where(eq(users.id, userId));
+    updateTag(CACHE_TAGS.activity);
+  } catch {
+    // Best-effort — see the doc comment above.
+  }
 }
