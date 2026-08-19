@@ -1,6 +1,6 @@
 # 0005. Vercel Speed Insights, and why not Web Analytics
 
-- **Status:** Accepted
+- **Status:** Accepted, amended 2026-08-19 (see [Amendment](#amendment-2026-08-19-page-views-are-in-after-all))
 - **Date:** 2026-08-07
 
 ## Context
@@ -53,6 +53,9 @@ It is free at our scale and directly answers "did that performance work help on 
 
 **`@vercel/analytics` is deliberately not installed.**
 We are on Hobby and not upgrading, so it would deliver nothing.
+
+> **Amended 2026-08-19.** This paragraph no longer holds — the package *is* now installed,
+> for page views only. See the [amendment](#amendment-2026-08-19-page-views-are-in-after-all) below.
 
 Enabling the product is a dashboard toggle, not a code change: Vercel dashboard → **Speed Insights** in the sidebar → select the project → **Enable**, then redeploy.
 The component sits idle until that toggle is flipped.
@@ -110,3 +113,58 @@ What will need revisiting:
 - The **7-day Hobby reporting window** means a regression must be noticed within a week. There is no long-term trend line, so a slow drift over months will be invisible. If that becomes a problem, the options are Pro (30 days) or exporting the numbers ourselves.
 - Speed Insights on Hobby covers **one project only**. A second Vercel project would have to share or go without.
 - If we ever move to Pro, revisit the custom-event section above rather than redesigning it.
+
+## Amendment 2026-08-19: page views are in after all
+
+The original decision rejected `@vercel/analytics` outright.
+That rejection rested on one judgement — that aggregate page views are "close to worthless" for a
+two-person household — and on one hard fact: custom events are Pro-only.
+
+The fact still stands and is unchanged.
+The judgement has been overridden by the product owner, who explicitly wants to know which
+feature/tab is most used.
+Page views answer exactly that question, and they are available on Hobby.
+
+**`@vercel/analytics` is now installed and `<Analytics />` is mounted in `app/layout.tsx`,
+beside `<SpeedInsights />` and outside the session branch for the same reason.**
+
+Two constraints carry over unchanged and are not negotiable:
+
+- **No `track()` calls anywhere.** On Hobby, `track()` is a no-op that silently discards.
+  Shipping calls that look like instrumentation but record nothing is worse than no
+  instrumentation, which was the original ADR's strongest argument and remains correct.
+  The two designed-but-unimplemented events above stay unimplemented.
+- **The privacy rules are unchanged.** Page views record the resolved route only. No item names,
+  recipe titles, pasted URLs, calendar text, or email addresses.
+
+### The event-budget trap this opens
+
+Hobby allows 50,000 events per month, shared across every project on the account, and collection
+**pauses for 7 days** once the cap is hit — it does not merely stop billing.
+
+`LiveRefresh` polls `router.refresh()` every 15 seconds while the app is foregrounded.
+If that were to register a page view, two phones with the app open for a few hours a day would
+generate several hundred thousand events a month and blow the cap many times over.
+
+It does not.
+Verified by reading the installed package rather than by assuming: in
+`@vercel/analytics/dist/next/index.js`, the page view fires from a `useEffect` whose dependency
+array is `[props.route, props.path]`, both derived from `usePathname`/`useParams`.
+`router.refresh()` re-renders the current route without changing either, so the dependencies stay
+referentially equal and the effect does not re-fire.
+
+This is worth re-checking on any `@vercel/analytics` upgrade: it is an internal implementation
+detail, not a documented guarantee, and the failure mode is silent — the bill is not the symptom,
+a month of missing data is.
+
+**Anyone changing `LiveRefresh` to navigate rather than refresh must re-check this.**
+
+### The reporting window is still the weak point
+
+Web Analytics gives a 1-month window on Hobby; Speed Insights gives 7 days.
+Neither is a trend line, and Speed Insights data cannot be exported on Hobby at all — Drains are
+Pro-and-above, and there is no public read API.
+
+That gap is closed separately by self-collected Web Vitals stored in our own Neon database
+(ADR 0008), which is not subject to anyone's retention window.
+Vercel's dashboards remain the convenient view; our table is the durable record.

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { BottomNav } from "@/components/bottom-nav";
 import { LiveRefresh } from "@/components/live-refresh";
@@ -60,11 +61,13 @@ export default async function RootLayout({
         )}
         <SwRegister />
         {/*
-          Outside the session branch on purpose: the sign-in page's load
-          performance counts too. Renders null and injects a deferred script,
-          and sends nothing in development.
+          Both outside the session branch so the sign-in page is measured too.
+          Page views only: on Hobby, custom events are a Pro feature and
+          track() silently discards, so this app makes no track() calls at all.
+          See ADR 0005.
         */}
         <SpeedInsights />
+        <Analytics />
       </body>
     </html>
   );
