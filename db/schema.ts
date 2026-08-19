@@ -405,7 +405,17 @@ export const eventAttachments = pgTable("event_attachments", {
     .notNull()
     .references(() => calendarEvents.id, { onDelete: "cascade" }),
   url: text("url").notNull(),
-  pathname: text("pathname").notNull(),
+  /**
+   * The Blob store's own key for this object. Unique because the upload
+   * route's `addRandomSuffix: true` makes it unique per upload attempt
+   * regardless of filename collisions — which is exactly what makes it the
+   * idempotency key for `onUploadCompleted`'s insert
+   * (app/api/attachments/upload/route.ts): Vercel retries that webhook (up
+   * to 5 times) on anything but a 200 response, and this column's own
+   * uniqueness is what lets `onConflictDoNothing` recognise a retry of an
+   * already-processed callback instead of inserting a duplicate row.
+   */
+  pathname: text("pathname").notNull().unique(),
   filename: text("filename").notNull(),
   contentType: text("content_type").notNull(),
   size: integer("size").notNull(),

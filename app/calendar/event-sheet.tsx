@@ -227,22 +227,37 @@ export function EventSheet({
   const [, startCommentTransition] = useTransition();
 
   // Attachments section state (PR 9; ADR 0010). Local to this component,
-  // same reasoning as the comments state just above: nothing else on the
-  // page needs to know about an in-flight upload/delete before it lands.
-  // `onUploadCompleted` (app/api/attachments/upload/route.ts) writes the
-  // real row server-side and does NOT fire against localhost dev, so the
-  // optimistic append below is what makes an uploaded photo appear at all
-  // before the next LiveRefresh poll picks up the committed row.
-  type AttachmentAction =
-    | { type: "add"; attachment: EventAttachment }
-    | { type: "remove"; id: string };
-  const [optimisticAttachments, dispatchAttachment] = useOptimistic(
-    attachments,
-    (state: EventAttachment[], action: AttachmentAction) =>
-      action.type === "add"
-        ? [...state, action.attachment]
-        : state.filter((a) => a.id !== action.id),
-  );
+  // same reasoning as the comments state above — with one deliberate
+  // difference from comments: plain `useState`, not `useOptimistic`.
+  // `useOptimistic`'s overlay reverts as soon as the transition that set it
+  // settles, which for an upload is the instant `upload()` itself resolves —
+  // long before `onUploadCompleted` (app/api/attachments/upload/route.ts,
+  // invoked by Vercel's own infrastructure, not by this request) has written
+  // the row and a LiveRefresh poll has delivered it back as a prop. With
+  // `useOptimistic` the freshly-added photo would reliably flash in and then
+  // vanish. `pendingAttachments` instead just sits there, plain client
+  // state, until a real row with the same `pathname` shows up in the
+  // `attachments` prop — see `visibleAttachments` below — at which point it
+  // is filtered out because the real row is now rendering in its place.
+  const [pendingAttachments, setPendingAttachments] = useState<EventAttachment[]>([]);
+  // Mirrors the same "plain local state, not useOptimistic" reasoning for
+  // delete: hides a row the instant its Delete is confirmed, and rolls back
+  // (removes its id from this set) if the Server Action itself fails —
+  // there is no transition here to revert it automatically.
+  const [deletedAttachmentIds, setDeletedAttachmentIds] = useState<Set<string>>(new Set());
+  // Ids/pathnames whose thumbnail failed to decode (HEIC in particular:
+  // most browsers can't render it inline even though it's an allowed
+  // upload type) — swaps that one row over to the generic FileText icon
+  // rather than leaving a broken-image glyph in the list.
+  const [brokenThumbnails, setBrokenThumbnails] = useState<Set<string>>(new Set());
+  const visibleAttachments: EventAttachment[] = [
+    ...attachments.filter((a) => !deletedAttachmentIds.has(a.id)),
+    ...pendingAttachments.filter(
+      (p) =>
+        !deletedAttachmentIds.has(p.id) &&
+        !attachments.some((a) => a.pathname === p.pathname),
+    ),
+  ];
   const [uploading, setUploading] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [confirmingDeleteAttachmentId, setConfirmingDeleteAttachmentId] = useState<
@@ -250,7 +265,6 @@ export function EventSheet({
   >(null);
   const confirmDeleteAttachmentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [, startAttachmentTransition] = useTransition();
   // See month-grid.tsx's/agenda.tsx's own comment on the identical pattern:
   // null for the one render that must match the server's HTML, then the
   // real device instant right after.
@@ -463,20 +477,25 @@ export function EventSheet({
   }
 
   /**
-   * Uploads a picked file straight to Vercel Blob and optimistically appends
-   * it to this event's attachment list. Client-side by necessity, not
-   * choice (plan design decision 9): a Server Action caps its own request
-   * body at 1MB, and a Vercel Function hard-caps at 4.5MB regardless, both
-   * well under the 10MB this feature allows — `upload()` (`@vercel/blob/client`)
-   * talks to `/api/attachments/upload` for a short-lived token first, then
-   * uploads directly to the store, bypassing both limits entirely.
+   * Uploads a picked file straight to Vercel Blob and appends it to
+   * `pendingAttachments` once `upload()` resolves. Client-side by necessity,
+   * not choice (plan design decision 9): a Server Action caps its own
+   * request body at 1MB, and a Vercel Function hard-caps at 4.5MB
+   * regardless, both well under the 10MB this feature allows — `upload()`
+   * (`@vercel/blob/client`) talks to `/api/attachments/upload` for a
+   * short-lived token first, then uploads directly to the store, bypassing
+   * both limits entirely.
+   *
+   * Deliberately plain `setState`, not `useOptimistic` — see
+   * `pendingAttachments`'s own doc comment above for why a transition-based
+   * optimistic update reverts before the real row can ever arrive here.
    *
    * The pre-checks below mirror the server's own (app/api/attachments/upload/route.ts)
    * so an obviously-bad file fails instantly with a friendly message instead
    * of after a round trip — the server enforces both for real regardless,
    * since a client-side check can always be bypassed.
    */
-  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     // Reset now, not after the upload settles, so picking the exact same
     // file again still fires this handler's own onChange.
@@ -494,41 +513,48 @@ export function EventSheet({
     }
 
     setUploading(true);
-    startAttachmentTransition(async () => {
-      try {
-        // Scoped under events/<eventId>/ — the upload route's own
-        // onBeforeGenerateToken rejects any pathname outside that prefix,
-        // so this isn't just filing convention, it's what the route
-        // actually checks against the clientPayload's own eventId below.
-        const blob = await upload(`events/${event.id}/${file.name}`, file, {
-          access: "public",
-          handleUploadUrl: "/api/attachments/upload",
-          clientPayload: JSON.stringify({ eventId: event.id }),
-        });
-        dispatchAttachment({
-          type: "add",
-          attachment: {
-            id: crypto.randomUUID(),
-            eventId: event.id,
-            url: blob.url,
-            pathname: blob.pathname,
-            filename: file.name,
-            contentType: blob.contentType,
-            size: file.size,
-            uploadedById: currentUserId,
-            createdAt: new Date(),
-          },
-        });
-      } catch (err) {
-        setAttachmentError(err instanceof Error ? err.message : "Upload failed — please try again.");
-      } finally {
-        setUploading(false);
-      }
-    });
+    try {
+      // Scoped under events/<eventId>/ — the upload route's own
+      // onBeforeGenerateToken rejects any pathname outside that prefix (and
+      // any traversal inside the filename part of it), so this isn't just
+      // filing convention, it's what the route actually checks against the
+      // clientPayload's own eventId below.
+      const blob = await upload(`events/${event.id}/${file.name}`, file, {
+        access: "public",
+        handleUploadUrl: "/api/attachments/upload",
+        clientPayload: JSON.stringify({ eventId: event.id }),
+      });
+      setPendingAttachments((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          eventId: event.id,
+          url: blob.url,
+          pathname: blob.pathname,
+          filename: file.name,
+          contentType: blob.contentType,
+          size: file.size,
+          uploadedById: currentUserId,
+          createdAt: new Date(),
+        },
+      ]);
+    } catch (err) {
+      setAttachmentError(err instanceof Error ? err.message : "Upload failed — please try again.");
+    } finally {
+      setUploading(false);
+    }
   }
 
-  /** Two-tap delete per attachment, same arm-then-confirm pattern as the event's own Delete button below, just keyed per attachment id instead of a single boolean. */
-  function handleDeleteAttachment(id: string) {
+  /**
+   * Two-tap delete per attachment, same arm-then-confirm pattern as the
+   * event's own Delete button below, just keyed per attachment id instead
+   * of a single boolean. Hides the row via `deletedAttachmentIds` the
+   * instant it's confirmed (plain `setState`, not `useOptimistic` — same
+   * reasoning as the upload handler above) and rolls that back if the
+   * Server Action itself fails, since there's no transition here to revert
+   * it automatically.
+   */
+  async function handleDeleteAttachment(id: string) {
     if (confirmDeleteAttachmentTimer.current) clearTimeout(confirmDeleteAttachmentTimer.current);
     if (confirmingDeleteAttachmentId !== id) {
       setConfirmingDeleteAttachmentId(id);
@@ -540,14 +566,17 @@ export function EventSheet({
     }
     setConfirmingDeleteAttachmentId(null);
     setAttachmentError(null);
-    startAttachmentTransition(async () => {
-      dispatchAttachment({ type: "remove", id });
-      try {
-        await deleteAttachment(id);
-      } catch {
-        setAttachmentError("Could not delete — please try again.");
-      }
-    });
+    setDeletedAttachmentIds((prev) => new Set(prev).add(id));
+    try {
+      await deleteAttachment(id);
+    } catch {
+      setAttachmentError("Could not delete — please try again.");
+      setDeletedAttachmentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
   }
 
   // Whichever startDate handleSave will actually send: the master's own
@@ -974,13 +1003,13 @@ export function EventSheet({
             <div className="border-t border-black/10 pt-3 dark:border-white/15">
               <p className="mb-1.5 text-xs text-zinc-500">
                 Attachments
-                {optimisticAttachments.length > 0 ? ` (${optimisticAttachments.length})` : ""}
+                {visibleAttachments.length > 0 ? ` (${visibleAttachments.length})` : ""}
               </p>
-              {optimisticAttachments.length > 0 && (
+              {visibleAttachments.length > 0 && (
                 <ul className="mb-2 space-y-2">
-                  {optimisticAttachments.map((a) => (
+                  {visibleAttachments.map((a) => (
                     <li key={a.id} className="flex items-center gap-2 text-sm">
-                      {a.contentType.startsWith("image/") ? (
+                      {a.contentType.startsWith("image/") && !brokenThumbnails.has(a.id) ? (
                         // A Blob-hosted photo, not a locally-optimisable
                         // asset — next/image can't apply its own
                         // optimisation pipeline to an arbitrary external
@@ -991,6 +1020,14 @@ export function EventSheet({
                           src={a.url}
                           alt=""
                           className="size-10 shrink-0 rounded-md object-cover"
+                          // Most browsers can't decode HEIC (an allowed
+                          // upload type) inline, and any other image type
+                          // could in principle fail to decode too — either
+                          // way, fall back to the generic file icon rather
+                          // than leaving a broken-image glyph in the list.
+                          onError={() =>
+                            setBrokenThumbnails((prev) => new Set(prev).add(a.id))
+                          }
                         />
                       ) : (
                         <FileText

@@ -1,7 +1,7 @@
 import { head } from "@vercel/blob";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { and, eq } from "drizzle-orm";
-import { updateTag } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { auth } from "@/auth";
 import { getDb } from "@/db";
 import { calendarEvents, eventAttachments } from "@/db/schema";
@@ -64,6 +64,18 @@ function parseClientPayload(raw: string | null): { eventId: string } | null {
   }
 }
 
+// Errors this route throws itself, on purpose, with wording that's already
+// safe to hand back to the client. Anything else caught below (a DB driver
+// error, a Blob SDK internals error, whatever) is NOT in this set and gets
+// mapped to a generic message instead — a raw driver/internals message must
+// never reach the client verbatim.
+const KNOWN_UPLOAD_ERRORS = new Set([
+  "Not authenticated.",
+  "Missing target event.",
+  "Invalid upload path.",
+  "This event no longer exists.",
+]);
+
 /**
  * POST /api/attachments/upload
  *
@@ -111,12 +123,19 @@ export async function POST(request: Request): Promise<Response> {
         // Scoping the pathname under events/<eventId>/ is enforced here, not
         // just documented as a convention — a client can't smuggle a
         // pathname into another event's "folder" while still passing an
-        // unrelated clientPayload eventId.
+        // unrelated clientPayload eventId. The Blob SDK itself only blocks a
+        // literal `//` in a pathname, so the suffix after the prefix is
+        // additionally checked for a nested `/` (which would place the blob
+        // outside this event's own "folder") and a `..` segment (path
+        // traversal) — neither is caught upstream.
         const expectedPrefix = `events/${payload.eventId}/`;
         if (!pathname.startsWith(expectedPrefix)) {
           throw new Error("Invalid upload path.");
         }
         const filename = pathname.slice(expectedPrefix.length);
+        if (!filename || filename.includes("/") || filename.includes("..")) {
+          throw new Error("Invalid upload path.");
+        }
 
         const [event] = await getDb()
           .select({ id: calendarEvents.id })
@@ -154,15 +173,26 @@ export async function POST(request: Request): Promise<Response> {
         // pays to get a value the schema's `size` column requires not-null.
         const { size } = await head(blob.url);
 
-        await getDb().insert(eventAttachments).values({
-          eventId,
-          url: blob.url,
-          pathname: blob.pathname,
-          filename,
-          contentType: blob.contentType,
-          size,
-          uploadedById: userId,
-        });
+        // `onConflictDoNothing`, same idempotency shape as reminder_log
+        // (app/api/reminders/run/route.ts): Vercel retries this webhook up
+        // to 5 times on anything but a 200 response, so a retry of an
+        // already-processed callback must not insert a second row for the
+        // same blob. `pathname` is UNIQUE (db/schema.ts) precisely because
+        // `addRandomSuffix: true` makes it unique per upload attempt, which
+        // is what lets a retry's insert conflict against — and be silently
+        // absorbed by — the exact row this callback already created.
+        await getDb()
+          .insert(eventAttachments)
+          .values({
+            eventId,
+            url: blob.url,
+            pathname: blob.pathname,
+            filename,
+            contentType: blob.contentType,
+            size,
+            uploadedById: userId,
+          })
+          .onConflictDoNothing();
 
         // No activity row and no partner push here (the cache-tag matrix,
         // design decision 6 of the shared-calendar plan, routes attachment
@@ -170,7 +200,19 @@ export async function POST(request: Request): Promise<Response> {
         // up silently on the next 15s LiveRefresh poll is judged enough; a
         // household of two doesn't need a push for every photo added to an
         // event they already have open or will open again shortly.
-        updateTag(CACHE_TAGS.calendarEvents);
+        //
+        // `revalidateTag`, not `updateTag`: `updateTag` throws when called
+        // outside a Server Action — this is a Route Handler, invoked by
+        // Vercel's own infrastructure rather than a form submission, and
+        // Next 16's own thrown message for that case ("updateTag can only
+        // be called from within a Server Action... use revalidateTag
+        // instead") names this exact replacement. `{ expire: 0 }` asks for
+        // the same immediate, hard invalidation `updateTag` itself performs
+        // (revalidateTag's own default profile trades immediacy for a
+        // stale-while-revalidate window, which would let a stale calendar
+        // read survive far longer than the 15s LiveRefresh poll this
+        // feature otherwise relies on).
+        revalidateTag(CACHE_TAGS.calendarEvents, { expire: 0 });
       },
     });
 
@@ -178,10 +220,14 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     // Mirrors handleUpload's own documented failure contract: a thrown error
     // from either callback above must still produce a response the client's
-    // upload() call can surface, not an unhandled 500.
-    return Response.json(
-      { error: error instanceof Error ? error.message : "Upload failed." },
-      { status: 400 },
-    );
+    // upload() call can surface, not an unhandled 500. Only messages this
+    // route threw itself (KNOWN_UPLOAD_ERRORS) are ever passed through —
+    // anything else (a DB driver error, a Blob SDK internals error) is
+    // replaced with a generic message so it never reaches the client verbatim.
+    const message =
+      error instanceof Error && KNOWN_UPLOAD_ERRORS.has(error.message)
+        ? error.message
+        : "Upload failed — please try again.";
+    return Response.json({ error: message }, { status: 400 });
   }
 }

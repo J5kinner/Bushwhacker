@@ -50,9 +50,33 @@ since a client-side check can always be bypassed.
 Vercel's own storage infrastructure calls this callback directly once the upload has actually
 landed, which means it does not fire against `pnpm dev` — verifying the row actually gets written
 is only possible on a Vercel preview with a Blob store connected.
-The event sheet compensates by optimistically appending a locally-built row the moment `upload()`
-itself resolves, the same "dispatch, then reconcile" shape every other optimistic update in this
-codebase uses; the next 15-second `LiveRefresh` poll reconciles it against the real row.
+The callback busts the cache with `revalidateTag(CACHE_TAGS.calendarEvents, { expire: 0 })`, not
+`updateTag`.
+`updateTag` throws when called from a Route Handler rather than a Server Action, and Next 16's own
+thrown message for that case names `revalidateTag` as the replacement.
+The `{ expire: 0 }` profile asks for the same immediate, hard invalidation `updateTag` performs,
+rather than `revalidateTag`'s own default stale-while-revalidate window, which would let the
+15-second `LiveRefresh` poll below read a stale cache entry for far longer than 15 seconds.
+Vercel also retries this webhook up to five times on anything but a 200 response, so the insert
+uses `onConflictDoNothing()` against a UNIQUE constraint on `pathname` — the same
+insert-is-the-idempotency-check pattern `reminder_log` already uses (ADR 0009) — so a retried
+callback for an upload this route already processed re-targets the same row instead of duplicating
+it.
+`addRandomSuffix: true` is what makes `pathname` unique per upload attempt in the first place.
+
+**The event sheet reconciles a pending upload against plain local state, not `useOptimistic`.**
+`useOptimistic`'s overlay reverts as soon as the transition that set it settles — for an upload,
+that is the instant `upload()` itself resolves, which is *before* `onUploadCompleted` has written
+the row and long before a `LiveRefresh` poll has delivered it back as a prop.
+Using `useOptimistic` here made a freshly-uploaded photo flash in and then vanish.
+Instead, `pendingAttachments` is a plain `useState` array: `upload()` resolving appends a
+locally-built row to it, and the sheet renders `attachments` (the server-confirmed prop, minus
+anything locally deleted) followed by whichever `pendingAttachments` entries have no matching
+`pathname` in `attachments` yet.
+Once the real row lands as a prop, the pending entry is filtered out because the real one is now
+rendering in its place — deterministic, and never dependent on a transition's own revert timing.
+Deleting an attachment uses the mirror-image mechanism: a plain `deletedAttachmentIds` set hides a
+row the instant its delete is confirmed, and is rolled back if the Server Action itself fails.
 
 **Deleting an attachment, or the event it belongs to, is a database delete first and a best-effort
 blob delete second.**
@@ -73,6 +97,15 @@ the existing `calendar-events` tag rather than a new one, and neither writes to 
 appearing on an event the other member already has open (or will reopen) doesn't carry the same
 "something changed that needs a heads-up" weight a new event, edit, delete or comment does.
 
+**Blobs are uploaded with `access: "public"`.**
+A public blob's URL is unguessable (the store path includes Blob's own random suffix) but carries
+no authentication check of its own and never expires.
+Anyone who obtains the URL — a forwarded link, a leaked screenshot, a browser history entry on a
+shared device — can view or download the file indefinitely, with no way to revoke access short of
+deleting the blob outright.
+Accepted at household scale, the same posture the plan already takes toward the ICS feed's own
+long-lived token-in-URL access model.
+
 **Images plus PDF is the initial allowlist**, matching what the plan's premium-parity feature
 mapping actually asks for; widening it later is a one-line change to the allowlist in both the
 upload route and the event sheet's own pre-check.
@@ -89,11 +122,15 @@ reminder sender's scheduling constraints (ADR 0009).
   preview with a Blob store connected, not in ordinary development.
 - Orphaned blobs are a known, accepted cost: a failed `del()`, or any future code path that removes
   an event without going through `deleteCalendarEvent`, leaves storage Vercel Blob will keep
-  billing usage against (within the Hobby quota) with nothing in this PR to reconcile it. A cleanup
-  job is a fair future addition if the household ever approaches the Hobby storage ceiling.
+  billing usage against (within the Hobby quota) with nothing in this PR to reconcile it.
+  A cleanup job is a fair future addition if the household ever approaches the Hobby storage ceiling.
 - The 10MB/allowlist ceiling is enforced in three places that must be changed together if it ever
   moves: the upload route's `onBeforeGenerateToken`, the event sheet's client-side pre-check, and
   this ADR's own description of the trade-off.
 - A household member sees no notification when their partner attaches a photo — by design, per the
   cache-tag matrix — which means an attachment can go unnoticed until the event is next opened,
   unlike every other calendar mutation in this plan.
+- Every attachment URL is publicly and permanently readable by anyone who has it, with no
+  authentication and no expiry — deleting the blob is the only way to revoke access.
+  If HomeSync ever needs a stronger guarantee than "the URL is hard to guess", this would need
+  `access: "private"` plus a signed-URL read path, which is a bigger change than this PR takes on.
