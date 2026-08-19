@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import { Pin, PinOff, Trash2, X } from "lucide-react";
-import type { CalendarEvent } from "@/db/schema";
+import type { CalendarEvent, EventComment } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS } from "@/lib/event-colours";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import type { HouseholdMember } from "@/lib/queries";
 import type { Occurrence } from "@/lib/recurrence";
 import type { CalendarEventInput } from "./actions";
+import { addComment } from "./actions";
+import { formatRelativeTime, useDeviceNow } from "./relative-time";
 
 // Duplicated from calendar-events.tsx rather than imported, so the two client
 // components don't form an import cycle (that file renders this one). Keep
@@ -63,15 +65,18 @@ const REPEAT_UNIT_LABEL: Record<RepeatFreq, string> = {
  * that instead would open, say, the third Tuesday of a weekly series and
  * silently pre-fill the very first Tuesday's date.
  *
- * This sheet is a long-lived seam: later PRs (comments — PR 7; a reminder
- * picker — PR 8; attachments — PR 9) each mount one more labelled section
- * here. PR 4 (this one) is the first to use the extension region, for the
- * Repeat section. The extension region below the core fields is where new
- * sections go, so they never need to restructure this form.
+ * This sheet is a long-lived seam: later PRs (a reminder picker — PR 8;
+ * attachments — PR 9) each mount one more labelled section here. PR 4 was
+ * the first to use the extension region, for the Repeat section; PR 7 (this
+ * one) adds the Comments section below it. The extension region below the
+ * core fields is where new sections go, so they never need to restructure
+ * this form.
  */
 export function EventSheet({
   occurrence,
   members,
+  comments,
+  currentUserId,
   error,
   onClose,
   onSave,
@@ -82,6 +87,10 @@ export function EventSheet({
 }: {
   occurrence: Occurrence;
   members: HouseholdMember[];
+  /** This event's own comment thread, oldest first — already filtered from the household's full list by calendar-events.tsx. */
+  comments: EventComment[];
+  /** For the optimistic append below — the real author id lands once the Server Action's insert is read back. */
+  currentUserId: string | null;
   error: string | null;
   onClose: () => void;
   /** Whole-row save: a plain event, an override row, or a master's "whole series" save. */
@@ -141,6 +150,26 @@ export function EventSheet({
   );
   const headingRef = useRef<HTMLHeadingElement>(null);
 
+  // Comments section state. `useOptimistic` here is local to this
+  // component, not lifted to calendar-events.tsx like the rest of the
+  // sheet's optimistic state: the thread only ever needs to append, and
+  // nothing else on the page needs to know about an in-flight comment
+  // before it lands, so there is no reason to route it through the parent's
+  // reducer. `startCommentTransition` mirrors calendar-events.tsx's own
+  // `run` helper (dispatch, then await the Server Action, surfacing any
+  // error) at the scale this one section needs.
+  const [optimisticComments, addOptimisticComment] = useOptimistic(
+    comments,
+    (state: EventComment[], newComment: EventComment) => [...state, newComment],
+  );
+  const [commentBody, setCommentBody] = useState("");
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [, startCommentTransition] = useTransition();
+  // See month-grid.tsx's/agenda.tsx's own comment on the identical pattern:
+  // null for the one render that must match the server's HTML, then the
+  // real device instant right after.
+  const now = useDeviceNow();
+
   // A background page scrolling behind an open sheet reads as broken on a
   // phone, where the sheet already covers most of the viewport.
   useEffect(() => {
@@ -161,8 +190,8 @@ export function EventSheet({
   // jumping back to the heading out from under whatever the user is typing.
   // A full focus trap (Tab wrapping around the sheet instead of escaping to
   // the page behind it) is deferred — later PRs copying this modal pattern
-  // (comments, reminders, attachments) should add one then rather than each
-  // reinventing it here.
+  // (reminders, attachments; the activity feed already does) should add one
+  // then rather than each reinventing it here.
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
@@ -309,6 +338,40 @@ export function EventSheet({
     setConfirmingDelete(false);
     if (scope === "occurrence") onDeleteOccurrence(occurrence.date);
     else onDelete(event.id);
+  }
+
+  /** The comment author's name, or "Someone" for an id with no matching member (a deleted account, in practice never today's two-member household). */
+  function authorName(authorId: string | null): string {
+    return members.find((m) => m.id === authorId)?.name ?? "Someone";
+  }
+
+  /**
+   * Posts a comment: appends an optimistic row locally, fires the
+   * `addComment` Server Action, and surfaces its error (if any) the same way
+   * the rest of this sheet does. Not a form `onSubmit` — the comment input
+   * sits inside this component's single outer `<form>` (whose submit is
+   * `handleSave`), so posting is wired to the Send button's own `onClick`
+   * plus the input's own Enter key, both explicitly `type="button"`/
+   * `preventDefault`, rather than letting Enter fall through to the form's
+   * default submit.
+   */
+  function handleAddComment() {
+    const trimmed = commentBody.trim();
+    if (!trimmed) return;
+    setCommentError(null);
+    const optimisticComment: EventComment = {
+      id: crypto.randomUUID(),
+      eventId: event.id,
+      authorId: currentUserId,
+      body: trimmed,
+      createdAt: new Date(),
+    };
+    setCommentBody("");
+    startCommentTransition(async () => {
+      addOptimisticComment(optimisticComment);
+      const result = await addComment(event.id, trimmed);
+      if (result?.error) setCommentError(result.error);
+    });
   }
 
   // Whichever startDate handleSave will actually send: the master's own
@@ -510,11 +573,11 @@ export function EventSheet({
 
           {/*
             ---- Extension region ----
-            Future sections (comments — PR 7; a reminder picker — PR 8;
-            attachments — PR 9) mount here too, each as its own labelled
-            block, below the core fields and above pin/delete. Adding one is
-            a pure insertion — nothing above or below this comment needs to
-            move.
+            Future sections (a reminder picker — PR 8; attachments — PR 9)
+            mount here too, each as its own labelled block, below the core
+            fields and above pin/delete. Adding one is a pure insertion —
+            nothing above or below this comment needs to move. Repeat (PR 4)
+            was the first section here; PR 7 (this one) adds Comments after it.
           */}
 
           {/*
@@ -625,6 +688,66 @@ export function EventSheet({
               )}
             </div>
           )}
+
+          {/*
+            Comments section. Text only, deliberately labelled "Comments" —
+            never "chat" — per the shared-calendar plan's feature mapping.
+            `optimisticComments` is `comments` (this event's own thread,
+            oldest first) with any still-saving local append layered on top.
+          */}
+          <div className="border-t border-black/10 pt-3 dark:border-white/15">
+            <p className="mb-1.5 text-xs text-zinc-500">
+              Comments
+              {optimisticComments.length > 0 ? ` (${optimisticComments.length})` : ""}
+            </p>
+            {optimisticComments.length > 0 && (
+              <ul className="mb-2 space-y-2">
+                {optimisticComments.map((c) => (
+                  <li key={c.id} className="text-sm">
+                    <p>
+                      <span className="font-medium">{authorName(c.authorId)}</span>{" "}
+                      <span className="text-xs text-zinc-500">
+                        {formatRelativeTime(c.createdAt, now)}
+                      </span>
+                    </p>
+                    <p>{c.body}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={commentBody}
+                onChange={(e) => setCommentBody(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter posts the comment rather than falling through to
+                  // this sheet's own outer <form>'s submit (handleSave) —
+                  // this input lives inside that same form, not one of its
+                  // own, since a <form> can't nest.
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddComment();
+                  }
+                }}
+                placeholder="Add a comment"
+                maxLength={1000}
+                className={`flex-1 ${inputClass}`}
+                aria-label="Comment"
+              />
+              <button
+                type="button"
+                onClick={handleAddComment}
+                className="rounded-lg bg-foreground px-3 py-2 text-sm text-background"
+              >
+                Send
+              </button>
+            </div>
+            {commentError && (
+              <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                {commentError}
+              </p>
+            )}
+          </div>
 
           <div className="flex items-center justify-between border-t border-black/10 pt-3 dark:border-white/15">
             <span className="flex items-center gap-1.5 text-sm">

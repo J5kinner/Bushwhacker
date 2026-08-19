@@ -2,8 +2,8 @@
 
 import { useMemo, useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
-import type { CalendarEvent } from "@/db/schema";
+import { Bell, Plus } from "lucide-react";
+import type { Activity, CalendarEvent, EventComment } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS } from "@/lib/event-colours";
 import type { HouseholdMember } from "@/lib/queries";
@@ -14,9 +14,11 @@ import {
   deleteOccurrence,
   deleteSeries,
   editOccurrence,
+  markActivitySeen,
   updateCalendarEvent,
   togglePinned,
 } from "./actions";
+import { ActivityFeed } from "./activity-feed";
 import { EventSheet } from "./event-sheet";
 import { VIEWS, ViewSwitcher, useSelectedView } from "./view-switcher";
 
@@ -134,6 +136,10 @@ export function CalendarEvents({
   windowTo,
   anchorMonth,
   members,
+  comments,
+  activity,
+  unseenCount,
+  currentUserId,
 }: {
   initialEvents: CalendarEvent[];
   exdates: Exdate[];
@@ -141,6 +147,13 @@ export function CalendarEvents({
   windowTo: string;
   anchorMonth: string | null;
   members: HouseholdMember[];
+  /** Every comment on this household's events, oldest first — filtered down to one event's slice before it reaches EventSheet. */
+  comments: EventComment[];
+  /** The household's latest activity rows, newest first (getActivity, lib/queries.ts). */
+  activity: Activity[];
+  /** Computed server-side (page.tsx) from the cached activity rows plus the current user's uncached activity_seen_at. */
+  unseenCount: number;
+  currentUserId: string | null;
 }) {
   const router = useRouter();
   const [optimistic, dispatch] = useOptimistic<OptimisticState, Action>(
@@ -156,6 +169,20 @@ export function CalendarEvents({
   // Carrying the whole `Occurrence` (not just its event) is what lets the
   // sheet know *which* date of a recurring master was actually tapped.
   const [editingOccurrence, setEditingOccurrence] = useState<Occurrence | null>(null);
+
+  // The activity feed sheet's open state, and an optimistic overlay on the
+  // server-computed unseen count: `unseenCount` is `props`, the household-
+  // shared cache plus this user's own uncached seen_at (page.tsx) — opening
+  // the feed clears the badge immediately (openActivityFeed below) without
+  // waiting for markActivitySeen's round trip and the next server read that
+  // follows it, the same "dispatch, then await the Server Action" shape as
+  // every other optimistic update on this page, just for a plain number
+  // instead of the events reducer.
+  const [activityFeedOpen, setActivityFeedOpen] = useState(false);
+  const [optimisticUnseenCount, setOptimisticUnseenCount] = useOptimistic(
+    unseenCount,
+    (_state: number, next: number) => next,
+  );
 
   // Expansion happens here, not in a view: every view renders Occurrence[],
   // never raw CalendarEvent rows, so recurrence (PR 4) lights up for all of
@@ -215,6 +242,38 @@ export function CalendarEvents({
   function closeEventSheet() {
     setError(null);
     setEditingOccurrence(null);
+  }
+
+  /**
+   * Opens the activity feed and marks it seen up to the newest row it's
+   * about to show — `activity` is already newest-first (getActivity,
+   * lib/queries.ts), so its first row's `createdAt` is that max. The
+   * optimistic badge-clear and the `markActivitySeen` call both happen
+   * inside one `startTransition`, the same shape `run` uses above: the
+   * badge clears at once, and the eventual server read (once the action's
+   * `updateTag(activity)` lands) reconciles `unseenCount` for real.
+   *
+   * Unlike `run`, a failure here doesn't set the shared `error` banner:
+   * `markActivitySeen` is itself best-effort (app/calendar/actions.ts), so
+   * the client side of the same call matches that semantic rather than
+   * surfacing a visible error over what the user experiences as merely
+   * opening a read-only feed — worst case the badge reappears on the next
+   * server read, which is annoying, never wrong. The try/catch exists so a
+   * network failure (this call, unlike the action's own DB write, can still
+   * throw) doesn't escape this transition as an unhandled rejection.
+   */
+  function openActivityFeed() {
+    setActivityFeedOpen(true);
+    const latest = activity[0]?.createdAt;
+    if (!latest) return;
+    startTransition(async () => {
+      setOptimisticUnseenCount(0);
+      try {
+        await markActivitySeen(latest);
+      } catch {
+        // Best-effort — see the doc comment above.
+      }
+    });
   }
 
   function onAdd(e: React.FormEvent) {
@@ -534,7 +593,42 @@ export function CalendarEvents({
         <p className="mb-3 text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
 
-      <ViewSwitcher selected={selectedViewId} onSelect={setSelectedViewId} />
+      {/*
+        `items-start`, not `items-center`, and no margin of the row's own:
+        ViewSwitcher (view-switcher.tsx, off limits to edit for this PR)
+        carries its own `mb-3`, which sets the gap below this whole row —
+        top-aligning both children instead of centering them keeps the bell
+        button level with the switcher's top edge rather than a Flexbox
+        vertical-centre pass shifting the switcher up by half of a margin
+        the button doesn't have.
+      */}
+      <div className="flex items-start justify-between gap-2">
+        <ViewSwitcher selected={selectedViewId} onSelect={setSelectedViewId} />
+        <button
+          type="button"
+          onClick={openActivityFeed}
+          aria-label={
+            // The visible badge caps its digits at "9+" (below) so it never
+            // overflows its own circle, but the aria-label keeps the exact
+            // count — a screen reader has no rendering-width constraint to
+            // work around.
+            optimisticUnseenCount > 0
+              ? `Activity, ${optimisticUnseenCount} unseen`
+              : "Activity"
+          }
+          className="relative rounded-full p-2 text-zinc-500 hover:bg-black/5 dark:hover:bg-white/10"
+        >
+          <Bell className="size-5" aria-hidden />
+          {optimisticUnseenCount > 0 && (
+            <span
+              aria-hidden
+              className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-medium text-white"
+            >
+              {optimisticUnseenCount > 9 ? "9+" : optimisticUnseenCount}
+            </span>
+          )}
+        </button>
+      </div>
 
       <SelectedView
         key={anchorMonth ?? "default"}
@@ -550,6 +644,8 @@ export function CalendarEvents({
         <EventSheet
           occurrence={editingOccurrence}
           members={members}
+          comments={comments.filter((c) => c.eventId === editingOccurrence.event.id)}
+          currentUserId={currentUserId}
           error={error}
           onClose={closeEventSheet}
           onSave={(optimisticEvent, input, expectedUpdatedAt) => {
@@ -636,6 +732,14 @@ export function CalendarEvents({
               () => deleteOccurrence(masterId, date),
             );
           }}
+        />
+      )}
+
+      {activityFeedOpen && (
+        <ActivityFeed
+          rows={activity}
+          members={members}
+          onClose={() => setActivityFeedOpen(false)}
         />
       )}
     </div>

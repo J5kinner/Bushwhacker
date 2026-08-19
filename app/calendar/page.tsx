@@ -1,5 +1,11 @@
-import { getCalendarWindow, getHouseholdMembers } from "@/lib/queries";
-import { getSetupIssue } from "@/lib/household";
+import {
+  getActivity,
+  getCalendarWindow,
+  getCurrentUserActivitySeenAt,
+  getEventComments,
+  getHouseholdMembers,
+} from "@/lib/queries";
+import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { resolveCalendarWindow } from "@/lib/calendar-window";
 import { SetupNotice } from "@/components/db-notice";
 import { CalendarEvents } from "./calendar-events";
@@ -18,11 +24,31 @@ export default async function CalendarPage({
     month: now.getUTCMonth() + 1,
   });
 
-  const [{ events, exdates }, members, setupIssue] = await Promise.all([
+  const [
+    { events, exdates },
+    members,
+    setupIssue,
+    comments,
+    activityRows,
+    activitySeenAt,
+    currentUserId,
+  ] = await Promise.all([
     getCalendarWindow(windowFrom, windowTo),
     getHouseholdMembers(),
     getSetupIssue(),
+    getEventComments(),
+    getActivity(),
+    getCurrentUserActivitySeenAt(),
+    getCurrentUserId(),
   ]);
+
+  // Never baked into the (household-shared, cached) activity read itself —
+  // see getCurrentUserActivitySeenAt's own doc comment — so the unseen count
+  // is computed here, per request, from the cached rows plus this one user's
+  // uncached seen marker.
+  const unseenCount = activitySeenAt
+    ? activityRows.filter((a) => a.createdAt > activitySeenAt).length
+    : activityRows.length;
 
   return (
     <div>
@@ -35,6 +61,10 @@ export default async function CalendarPage({
         windowTo={windowTo}
         anchorMonth={anchorMonth}
         members={members}
+        comments={comments}
+        activity={activityRows}
+        unseenCount={unseenCount}
+        currentUserId={currentUserId}
       />
     </div>
   );
