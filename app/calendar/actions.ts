@@ -1,9 +1,17 @@
 "use server";
 
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { del } from "@vercel/blob";
+import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { getDb } from "@/db";
-import { activity, calendarEvents, eventComments, eventExdates, users } from "@/db/schema";
+import {
+  activity,
+  calendarEvents,
+  eventAttachments,
+  eventComments,
+  eventExdates,
+  users,
+} from "@/db/schema";
 import { getHouseholdId, getCurrentUserId } from "@/lib/household";
 import { CACHE_TAGS, getHouseholdMembers } from "@/lib/queries";
 import { isEventColour } from "@/lib/event-colours";
@@ -396,6 +404,26 @@ export async function updateCalendarEvent(
 export async function deleteCalendarEvent(id: string) {
   const householdId = await getHouseholdId();
   if (!householdId) return;
+
+  // Collected BEFORE the delete below: `event_attachments.event_id` and
+  // `calendar_events.series_id` both cascade (`onDelete: "cascade"`,
+  // db/schema.ts), so the statement below removes every override row and
+  // every attachment row on this event (and its overrides) in one go —
+  // there is no row left afterwards to read a pathname from. Overrides are
+  // included (`seriesId = id`) because `deleteSeries` delegates straight to
+  // this function, and a whole-series delete takes every occurrence's
+  // override — and any photos attached to it — down with the master.
+  const attachments = await getDb()
+    .select({ pathname: eventAttachments.pathname })
+    .from(eventAttachments)
+    .innerJoin(calendarEvents, eq(eventAttachments.eventId, calendarEvents.id))
+    .where(
+      and(
+        eq(calendarEvents.householdId, householdId),
+        or(eq(calendarEvents.id, id), eq(calendarEvents.seriesId, id)),
+      ),
+    );
+
   // `returning` the title before it's gone, rather than a separate SELECT
   // first — one statement either way, and it doubles as the "did this
   // household actually own that id" check the activity write below needs.
@@ -411,6 +439,21 @@ export async function deleteCalendarEvent(id: string) {
   updateTag(CACHE_TAGS.calendarEvents);
 
   if (deleted) {
+    // Best-effort, run only now that the DB delete has actually committed:
+    // the FK cascade has already removed the rows regardless of whether the
+    // underlying blobs get deleted here, so a failed del() leaves an
+    // orphaned blob rather than a failed event delete — acceptable at
+    // household scale (ADR 0010's own Hobby quota trade-off), and strictly
+    // better than surfacing an error over a mutation that, from the
+    // database's point of view, fully succeeded.
+    if (attachments.length > 0) {
+      try {
+        await del(attachments.map((a) => a.pathname));
+      } catch {
+        // Best-effort — see the comment above.
+      }
+    }
+
     const actorId = await getCurrentUserId();
     await recordActivity({
       householdId,
@@ -668,6 +711,46 @@ export async function editOccurrence(
  */
 export async function deleteSeries(eventId: string): Promise<void> {
   await deleteCalendarEvent(eventId);
+}
+
+/**
+ * Deletes one attachment (PR 9; ADR 0010). `event_attachments` carries no
+ * `household_id` of its own, so the join back to `calendar_events` is what
+ * scopes the delete to this household — same pattern as `findOwnedMaster`
+ * above for `event_exdates`, and the same reasoning `addComment` below
+ * applies to `event_comments`: a stale or foreign attachment id must not let
+ * a caller delete (or trigger a blob delete for) something outside their own
+ * household's events.
+ *
+ * No activity row and no partner push (the cache-tag matrix, design
+ * decision 6 of the shared-calendar plan, keeps attachment add/remove
+ * silent — see the upload route's own identical comment on why).
+ */
+export async function deleteAttachment(id: string): Promise<void> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
+
+  const [attachment] = await getDb()
+    .select({ pathname: eventAttachments.pathname })
+    .from(eventAttachments)
+    .innerJoin(calendarEvents, eq(eventAttachments.eventId, calendarEvents.id))
+    .where(and(eq(eventAttachments.id, id), eq(calendarEvents.householdId, householdId)))
+    .limit(1);
+  if (!attachment) return;
+
+  await getDb().delete(eventAttachments).where(eq(eventAttachments.id, id));
+
+  // Best-effort, after the row is already gone: a failed blob delete must
+  // not fail this action over a row the user already sees removed — an
+  // orphaned blob is acceptable at household scale (ADR 0010), the same
+  // trade-off deleteCalendarEvent's own attachment cleanup above accepts.
+  try {
+    await del(attachment.pathname);
+  } catch {
+    // Best-effort — see the comment above.
+  }
+
+  updateTag(CACHE_TAGS.calendarEvents);
 }
 
 /**

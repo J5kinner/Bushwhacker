@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useOptimistic, useRef, useState, useTransition } from "react";
-import { Pin, PinOff, Trash2, X } from "lucide-react";
-import type { CalendarEvent, EventComment } from "@/db/schema";
+import { upload } from "@vercel/blob/client";
+import { FileText, LoaderCircle, Paperclip, Pin, PinOff, Trash2, X } from "lucide-react";
+import type { CalendarEvent, EventAttachment, EventComment } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS } from "@/lib/event-colours";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import type { HouseholdMember } from "@/lib/queries";
 import type { Occurrence } from "@/lib/recurrence";
 import type { CalendarEventInput } from "./actions";
-import { addComment } from "./actions";
+import { addComment, deleteAttachment } from "./actions";
 import { formatRelativeTime, useDeviceNow } from "./relative-time";
 
 // Duplicated from calendar-events.tsx rather than imported, so the two client
@@ -73,6 +74,37 @@ const ALL_DAY_REMINDER_OPTIONS: { minutes: number | null; label: string }[] = [
 ];
 
 /**
+ * Attachments (PR 9; ADR 0010). Mirrors the server's own allowlist and
+ * ceiling (app/api/attachments/upload/route.ts) exactly — this is a
+ * client-side pre-check only, purely so a bad file is rejected instantly
+ * with a friendly message instead of after a failed round trip; the server
+ * enforces both for real, since a pre-check can always be bypassed.
+ */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/heic",
+  "application/pdf",
+];
+
+/** "2.4 MB" / "340 KB" / "812 B" — no decimal below 1 MB, since a byte-level difference is never meaningful to a user picking between two similar photos. */
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+/** Truncates a long filename in the middle ("holiday-i…-photo.jpg"), keeping the extension readable rather than cutting it off. */
+function truncateFilename(name: string, maxLength = 28): string {
+  if (name.length <= maxLength) return name;
+  const half = Math.floor((maxLength - 1) / 2);
+  return `${name.slice(0, half)}…${name.slice(name.length - half)}`;
+}
+
+/**
  * The bottom sheet opened by tapping an occurrence in the agenda list: a full
  * edit form for every event-model-v2 field plus recurrence, pre-filled from
  * the occurrence the sheet was opened for, plus the pin toggle and the
@@ -90,17 +122,17 @@ const ALL_DAY_REMINDER_OPTIONS: { minutes: number | null; label: string }[] = [
  * that instead would open, say, the third Tuesday of a weekly series and
  * silently pre-fill the very first Tuesday's date.
  *
- * This sheet is a long-lived seam: later PRs (a reminder picker — PR 8;
- * attachments — PR 9) each mount one more labelled section here. PR 4 was
- * the first to use the extension region, for the Repeat section; PR 7 (this
- * one) adds the Comments section below it. The extension region below the
- * core fields is where new sections go, so they never need to restructure
- * this form.
+ * This sheet is a long-lived seam: each of PR 4, 7, 8 and 9 mounts one more
+ * labelled section here rather than restructuring the form — Repeat,
+ * Reminder, Comments, then Attachments (PR 9, this one) last of all, per
+ * the plan's own extension-region ordering (see that region's own comment
+ * below for the exact sequence).
  */
 export function EventSheet({
   occurrence,
   members,
   comments,
+  attachments,
   currentUserId,
   error,
   onClose,
@@ -114,6 +146,8 @@ export function EventSheet({
   members: HouseholdMember[];
   /** This event's own comment thread, oldest first — already filtered from the household's full list by calendar-events.tsx. */
   comments: EventComment[];
+  /** This event's own attachments, oldest first — already filtered from the household's full list by calendar-events.tsx, same as comments above. */
+  attachments: EventAttachment[];
   /** For the optimistic append below — the real author id lands once the Server Action's insert is read back. */
   currentUserId: string | null;
   error: string | null;
@@ -191,6 +225,32 @@ export function EventSheet({
   const [commentBody, setCommentBody] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
   const [, startCommentTransition] = useTransition();
+
+  // Attachments section state (PR 9; ADR 0010). Local to this component,
+  // same reasoning as the comments state just above: nothing else on the
+  // page needs to know about an in-flight upload/delete before it lands.
+  // `onUploadCompleted` (app/api/attachments/upload/route.ts) writes the
+  // real row server-side and does NOT fire against localhost dev, so the
+  // optimistic append below is what makes an uploaded photo appear at all
+  // before the next LiveRefresh poll picks up the committed row.
+  type AttachmentAction =
+    | { type: "add"; attachment: EventAttachment }
+    | { type: "remove"; id: string };
+  const [optimisticAttachments, dispatchAttachment] = useOptimistic(
+    attachments,
+    (state: EventAttachment[], action: AttachmentAction) =>
+      action.type === "add"
+        ? [...state, action.attachment]
+        : state.filter((a) => a.id !== action.id),
+  );
+  const [uploading, setUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [confirmingDeleteAttachmentId, setConfirmingDeleteAttachmentId] = useState<
+    string | null
+  >(null);
+  const confirmDeleteAttachmentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [, startAttachmentTransition] = useTransition();
   // See month-grid.tsx's/agenda.tsx's own comment on the identical pattern:
   // null for the one render that must match the server's HTML, then the
   // real device instant right after.
@@ -234,6 +294,7 @@ export function EventSheet({
   useEffect(() => {
     return () => {
       if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current);
+      if (confirmDeleteAttachmentTimer.current) clearTimeout(confirmDeleteAttachmentTimer.current);
     };
   }, []);
 
@@ -398,6 +459,94 @@ export function EventSheet({
       addOptimisticComment(optimisticComment);
       const result = await addComment(event.id, trimmed);
       if (result?.error) setCommentError(result.error);
+    });
+  }
+
+  /**
+   * Uploads a picked file straight to Vercel Blob and optimistically appends
+   * it to this event's attachment list. Client-side by necessity, not
+   * choice (plan design decision 9): a Server Action caps its own request
+   * body at 1MB, and a Vercel Function hard-caps at 4.5MB regardless, both
+   * well under the 10MB this feature allows — `upload()` (`@vercel/blob/client`)
+   * talks to `/api/attachments/upload` for a short-lived token first, then
+   * uploads directly to the store, bypassing both limits entirely.
+   *
+   * The pre-checks below mirror the server's own (app/api/attachments/upload/route.ts)
+   * so an obviously-bad file fails instantly with a friendly message instead
+   * of after a round trip — the server enforces both for real regardless,
+   * since a client-side check can always be bypassed.
+   */
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Reset now, not after the upload settles, so picking the exact same
+    // file again still fires this handler's own onChange.
+    e.target.value = "";
+    if (!file) return;
+    setAttachmentError(null);
+
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachmentError("Attachments are capped at 10 MB.");
+      return;
+    }
+    if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+      setAttachmentError("That file type isn't supported — images or PDF only.");
+      return;
+    }
+
+    setUploading(true);
+    startAttachmentTransition(async () => {
+      try {
+        // Scoped under events/<eventId>/ — the upload route's own
+        // onBeforeGenerateToken rejects any pathname outside that prefix,
+        // so this isn't just filing convention, it's what the route
+        // actually checks against the clientPayload's own eventId below.
+        const blob = await upload(`events/${event.id}/${file.name}`, file, {
+          access: "public",
+          handleUploadUrl: "/api/attachments/upload",
+          clientPayload: JSON.stringify({ eventId: event.id }),
+        });
+        dispatchAttachment({
+          type: "add",
+          attachment: {
+            id: crypto.randomUUID(),
+            eventId: event.id,
+            url: blob.url,
+            pathname: blob.pathname,
+            filename: file.name,
+            contentType: blob.contentType,
+            size: file.size,
+            uploadedById: currentUserId,
+            createdAt: new Date(),
+          },
+        });
+      } catch (err) {
+        setAttachmentError(err instanceof Error ? err.message : "Upload failed — please try again.");
+      } finally {
+        setUploading(false);
+      }
+    });
+  }
+
+  /** Two-tap delete per attachment, same arm-then-confirm pattern as the event's own Delete button below, just keyed per attachment id instead of a single boolean. */
+  function handleDeleteAttachment(id: string) {
+    if (confirmDeleteAttachmentTimer.current) clearTimeout(confirmDeleteAttachmentTimer.current);
+    if (confirmingDeleteAttachmentId !== id) {
+      setConfirmingDeleteAttachmentId(id);
+      confirmDeleteAttachmentTimer.current = setTimeout(
+        () => setConfirmingDeleteAttachmentId(null),
+        4000,
+      );
+      return;
+    }
+    setConfirmingDeleteAttachmentId(null);
+    setAttachmentError(null);
+    startAttachmentTransition(async () => {
+      dispatchAttachment({ type: "remove", id });
+      try {
+        await deleteAttachment(id);
+      } catch {
+        setAttachmentError("Could not delete — please try again.");
+      }
     });
   }
 
@@ -608,11 +757,11 @@ export function EventSheet({
 
           {/*
             ---- Extension region ----
-            Future sections (a reminder picker — PR 8; attachments — PR 9)
-            mount here too, each as its own labelled block, below the core
-            fields and above pin/delete. Adding one is a pure insertion —
-            nothing above or below this comment needs to move. Repeat (PR 4)
-            was the first section here; PR 7 (this one) adds Comments after it.
+            Each new section mounts here as its own labelled block, below the
+            core fields and above pin/delete — a pure insertion each time,
+            with nothing above or below this comment needing to move: Repeat
+            (PR 4), Reminder (PR 8), Comments (PR 7), then Attachments
+            (PR 9, this one) last, per the plan's own seam ordering.
           */}
 
           {/*
@@ -807,6 +956,108 @@ export function EventSheet({
               </p>
             )}
           </div>
+
+          {/*
+            Attachments section (PR 9; ADR 0010) — TimeTree premium's
+            file/photo attachments, mounted LAST in the extension region per
+            this sheet's own seam ordering (see the class doc comment above).
+            Hidden entirely for an event that only exists optimistically —
+            the temp row calendar-events.tsx's add form creates before the
+            server round trip lands, marked with the sentinel householdId
+            "optimistic" — because there is no real eventId yet for the
+            upload route to attach anything to. This sheet only ever opens
+            for a tapped occurrence (never a "new event" draft), so in
+            practice that sentinel is visible here only in the brief window
+            between an optimistic add and its own commit.
+          */}
+          {event.householdId !== "optimistic" && (
+            <div className="border-t border-black/10 pt-3 dark:border-white/15">
+              <p className="mb-1.5 text-xs text-zinc-500">
+                Attachments
+                {optimisticAttachments.length > 0 ? ` (${optimisticAttachments.length})` : ""}
+              </p>
+              {optimisticAttachments.length > 0 && (
+                <ul className="mb-2 space-y-2">
+                  {optimisticAttachments.map((a) => (
+                    <li key={a.id} className="flex items-center gap-2 text-sm">
+                      {a.contentType.startsWith("image/") ? (
+                        // A Blob-hosted photo, not a locally-optimisable
+                        // asset — next/image can't apply its own
+                        // optimisation pipeline to an arbitrary external
+                        // origin without extra config this feature doesn't
+                        // otherwise need, so a plain <img> is deliberate here.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={a.url}
+                          alt=""
+                          className="size-10 shrink-0 rounded-md object-cover"
+                        />
+                      ) : (
+                        <FileText
+                          className="size-10 shrink-0 rounded-md border border-black/10 p-2 text-zinc-500 dark:border-white/15"
+                          aria-hidden
+                        />
+                      )}
+                      <a
+                        href={a.url}
+                        target="_blank"
+                        rel="noopener"
+                        className="min-w-0 flex-1 truncate underline decoration-black/20 underline-offset-2 dark:decoration-white/25"
+                      >
+                        {truncateFilename(a.filename)}
+                      </a>
+                      <span className="shrink-0 text-xs text-zinc-500">
+                        {formatFileSize(a.size)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAttachment(a.id)}
+                        aria-label={
+                          confirmingDeleteAttachmentId === a.id
+                            ? `Confirm delete ${a.filename}`
+                            : `Delete ${a.filename}`
+                        }
+                        className={`shrink-0 rounded-full p-1.5 ${
+                          confirmingDeleteAttachmentId === a.id
+                            ? "text-red-600 dark:text-red-400"
+                            : "text-zinc-500 hover:bg-black/5 dark:hover:bg-white/10"
+                        }`}
+                      >
+                        <Trash2 className="size-4" aria-hidden />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={handleFileSelected}
+                className="hidden"
+                aria-label="Add attachment"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-2 text-sm disabled:opacity-50 dark:border-white/15"
+              >
+                {uploading ? (
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Paperclip className="size-4" aria-hidden />
+                )}
+                {uploading ? "Uploading…" : "Add attachment"}
+              </button>
+              {attachmentError && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                  {attachmentError}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-between border-t border-black/10 pt-3 dark:border-white/15">
             <span className="flex items-center gap-1.5 text-sm">

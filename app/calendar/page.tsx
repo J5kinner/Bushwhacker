@@ -2,6 +2,7 @@ import {
   getActivity,
   getCalendarWindow,
   getCurrentUserActivitySeenAt,
+  getEventAttachments,
   getEventComments,
   getHouseholdMembers,
 } from "@/lib/queries";
@@ -29,6 +30,7 @@ export default async function CalendarPage({
     members,
     setupIssue,
     comments,
+    attachments,
     activityRows,
     activitySeenAt,
     currentUserId,
@@ -37,6 +39,7 @@ export default async function CalendarPage({
     getHouseholdMembers(),
     getSetupIssue(),
     getEventComments(),
+    getEventAttachments(),
     getActivity(),
     getCurrentUserActivitySeenAt(),
     getCurrentUserId(),
@@ -62,6 +65,7 @@ export default async function CalendarPage({
         anchorMonth={anchorMonth}
         members={members}
         comments={comments}
+        attachments={attachments}
         activity={activityRows}
         unseenCount={unseenCount}
         currentUserId={currentUserId}

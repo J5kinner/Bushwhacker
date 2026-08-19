@@ -2,13 +2,14 @@ import { unstable_cache } from "next/cache";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { Session } from "next-auth";
 import { getDb } from "@/db";
-import type { Activity, CalendarEvent, EventComment } from "@/db/schema";
+import type { Activity, CalendarEvent, EventAttachment, EventComment } from "@/db/schema";
 import {
   shoppingItems,
   shoppingCategories,
   calendarEvents,
   eventExdates,
   eventComments,
+  eventAttachments,
   activity,
   chores,
   recipes,
@@ -38,6 +39,9 @@ export const CACHE_TAGS = {
   users: "users",
   eventComments: "event-comments",
   activity: "activity",
+  // No dedicated tag — attachment add/remove busts `calendarEvents` instead
+  // (the cache-tag matrix, design decision 6 of the shared-calendar plan;
+  // see getEventAttachments below for the read-side half of that choice).
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -244,6 +248,50 @@ export async function getEventComments(): Promise<EventComment[]> {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
   return fetchEventComments(householdId);
+}
+
+const fetchEventAttachments = unstable_cache(
+  (householdId: string) =>
+    getDb()
+      .select({
+        id: eventAttachments.id,
+        eventId: eventAttachments.eventId,
+        url: eventAttachments.url,
+        pathname: eventAttachments.pathname,
+        filename: eventAttachments.filename,
+        contentType: eventAttachments.contentType,
+        size: eventAttachments.size,
+        uploadedById: eventAttachments.uploadedById,
+        createdAt: eventAttachments.createdAt,
+      })
+      .from(eventAttachments)
+      // event_attachments carries no household_id of its own, so the join
+      // back to calendar_events is the household scope — same pattern as
+      // getEventComments' own join above.
+      .innerJoin(calendarEvents, eq(eventAttachments.eventId, calendarEvents.id))
+      .where(eq(calendarEvents.householdId, householdId))
+      .orderBy(asc(eventAttachments.createdAt)),
+  ["event-attachments"],
+  // Tagged `calendarEvents`, not a dedicated `event-attachments` tag: the
+  // cache-tag matrix (design decision 6 of the shared-calendar plan) routes
+  // attachment add/remove through the same tag as every other calendar
+  // mutation, so this read only needs to share that one tag rather than
+  // introduce a second one every attachment action would then also have to
+  // bust in lockstep.
+  { tags: [CACHE_TAGS.calendarEvents] },
+);
+
+/**
+ * Every attachment on this household's events. Filtering down to one
+ * event's own attachments happens client-side (app/calendar/calendar-events.tsx),
+ * the same pattern getEventComments already uses for comments — the
+ * household's whole attachment list is one small cached read, not worth a
+ * query per event.
+ */
+export async function getEventAttachments(): Promise<EventAttachment[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchEventAttachments(householdId);
 }
 
 const fetchActivity = unstable_cache(
