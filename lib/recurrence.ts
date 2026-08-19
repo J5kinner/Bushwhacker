@@ -131,7 +131,7 @@ function dailyDates(startISO: string, interval: number, earliestNeeded: string, 
  * plain `addDays`, -1 -> the prior Saturday) — filter to the valid 0-6 range
  * and fall back to the start date's own weekday if nothing valid remains.
  */
-function normaliseWeekdays(weekdays: number[] | null | undefined, start: Date): number[] {
+export function normaliseWeekdays(weekdays: number[] | null | undefined, start: Date): number[] {
   const valid = weekdays ? [...new Set(weekdays)].filter((w) => w >= 0 && w <= 6) : [];
   return valid.length ? valid.sort((a, b) => a - b) : [getDay(start)];
 }

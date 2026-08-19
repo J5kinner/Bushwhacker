@@ -52,8 +52,8 @@ test("wraps events in a VCALENDAR header with the required properties", () => {
   assert.equal(lines.at(-1), ""); // trailing CRLF after the final line
 });
 
-test("UID and DTSTAMP: UID from the row id, DTSTAMP from createdAt in UTC (never Date.now())", () => {
-  const lines = feedLines(makeEvent({ id: "abc-123", createdAt: new Date("2026-08-18T09:15:30.500Z") }));
+test("UID and DTSTAMP: UID from the row id, DTSTAMP from updatedAt in UTC (never Date.now())", () => {
+  const lines = feedLines(makeEvent({ id: "abc-123", updatedAt: new Date("2026-08-18T09:15:30.500Z") }));
   assert.ok(lines.includes("UID:abc-123@homesync"));
   assert.ok(lines.includes("DTSTAMP:20260818T091530Z"));
 });
@@ -140,14 +140,71 @@ test("folds a SUMMARY longer than 75 octets, continuation lines starting with a 
   assert.ok(ics.includes(expected), "expected the folded SUMMARY line to appear exactly as computed");
 });
 
-test("weekly RRULE includes BYDAY (SU..SA from JS getDay numbers) and INTERVAL when > 1", () => {
-  const lines = feedLines(makeEvent({ repeatFreq: "weekly", repeatInterval: 2, repeatWeekdays: [5, 1, 3] }));
-  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR"));
+test("folds a multi-byte SUMMARY without splitting a UTF-8 character, and round-trips cleanly", () => {
+  // U+1F389 PARTY POPPER is a 4-byte UTF-8 sequence. 66 leading "A"s put
+  // "SUMMARY:" + the As at exactly 74 octets (8 + 66), so a naive 75-octet
+  // byte cut lands on the emoji's *second* byte (a continuation byte) —
+  // exactly the case foldLine's boundary back-off exists for.
+  const emoji = "\u{1F389}";
+  const title = "A".repeat(66) + emoji + "A".repeat(30);
+  const ics = buildCalendarFeed([makeEvent({ title })], []);
+  const lines = ics.split("\r\n");
+
+  const summaryIndex = lines.findIndex((l) => l.startsWith("SUMMARY:"));
+  assert.notEqual(summaryIndex, -1);
+  // Confirms folding actually happened (not a vacuous pass) and lands
+  // exactly where computed: the emoji starts the continuation line, whole.
+  assert.equal(lines[summaryIndex], `SUMMARY:${"A".repeat(66)}`);
+  assert.equal(lines[summaryIndex + 1], ` ${emoji}${"A".repeat(30)}`);
+
+  // Unfolding (stripping "\r\n " between continuations) must reconstruct
+  // the exact original value — a split multi-byte sequence would decode to
+  // U+FFFD replacement characters instead of the real emoji and fail this.
+  let unfolded = lines[summaryIndex];
+  let i = summaryIndex + 1;
+  while (i < lines.length && lines[i].startsWith(" ")) {
+    unfolded += lines[i].slice(1);
+    i++;
+  }
+  assert.equal(unfolded, `SUMMARY:${title}`);
 });
 
-test("weekly RRULE with interval 1 omits INTERVAL", () => {
+test("weekly RRULE includes BYDAY (SU..SA from JS getDay numbers), INTERVAL when > 1, and WKST=SU", () => {
+  const lines = feedLines(makeEvent({ repeatFreq: "weekly", repeatInterval: 2, repeatWeekdays: [5, 1, 3] }));
+  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;WKST=SU"));
+});
+
+test("weekly RRULE with interval 1 omits INTERVAL but still carries WKST=SU", () => {
   const lines = feedLines(makeEvent({ repeatFreq: "weekly", repeatInterval: 1, repeatWeekdays: [0] }));
-  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;BYDAY=SU"));
+  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;BYDAY=SU;WKST=SU"));
+});
+
+test("WKST=SU prevents a biweekly BYDAY=SU,SA series from drifting against an RFC-faithful client", () => {
+  // RFC 5545 3.3.10 defaults an omitted WKST to MONDAY, but this app's own
+  // week anchoring (lib/recurrence.ts's weeklyDates) is Sunday-based. Left
+  // to that default, a strict RFC client expanding this exact rule at
+  // INTERVAL=2 would slide the Sunday leg of the pair a week later every
+  // other cycle relative to this engine's own dates — reproduced with
+  // rrule.js: without WKST=SU the two engines' occurrence lists diverge
+  // after the first cycle; with it, they match exactly. The start date
+  // (2026-08-19) is a Wednesday, i.e. mid-week, per the reviewer's probe.
+  const lines = feedLines(
+    makeEvent({ startDate: "2026-08-19", repeatFreq: "weekly", repeatInterval: 2, repeatWeekdays: [0, 6] }),
+  );
+  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,SA;WKST=SU"));
+});
+
+test("BYDAY drops an out-of-range weekday instead of emitting undefined (malformed BYDAY=MO,)", () => {
+  // repeat_weekdays has no CHECK constraint, so a stray 7 (one past Saturday)
+  // must be filtered out by normaliseWeekdays before mapping to a code,
+  // rather than indexing WEEKDAY_CODES out of bounds.
+  const lines = feedLines(makeEvent({ repeatFreq: "weekly", repeatWeekdays: [7, 1] }));
+  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;BYDAY=MO;WKST=SU"));
+});
+
+test("BYDAY drops a negative weekday and dedupes a repeat (malformed BYDAY=,WE,WE)", () => {
+  const lines = feedLines(makeEvent({ repeatFreq: "weekly", repeatWeekdays: [-1, 3, 3] }));
+  assert.ok(lines.includes("RRULE:FREQ=WEEKLY;BYDAY=WE;WKST=SU"));
 });
 
 test("monthly RRULE has no BYDAY and omits INTERVAL when 1", () => {

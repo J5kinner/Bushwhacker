@@ -1,6 +1,12 @@
 import { addDays, format, parseISO } from "date-fns";
 import type { CalendarEvent } from "@/db/schema";
-import type { Exdate } from "@/lib/recurrence";
+// A relative, extensioned import (not the "@/" alias used elsewhere in this
+// file) because normaliseWeekdays is a real value import: this file is
+// loaded directly by `node --test` via lib/ics.test.mts, whose native ESM
+// resolution understands neither the "@/" path alias nor extension-less
+// relative specifiers — unlike the `import type` below, which is erased
+// entirely and never reaches module resolution at runtime.
+import { normaliseWeekdays, type Exdate } from "./recurrence.ts";
 
 /**
  * Pure ICS (RFC 5545) generator for the outbound calendar-subscription feed
@@ -131,9 +137,11 @@ function textLine(name: string, value: string, params: Record<string, string> = 
 }
 
 /** RFC 5545 requires DTSTAMP in UTC regardless of DTSTART's form; sourced
- * from the row's own `createdAt`, never `Date.now()`, so this stays pure. */
-function toUtcStamp(createdAt: Date): string {
-  return createdAt.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+ * from the row's own `updatedAt` (bumped by `$onUpdate` on every edit, so an
+ * edited row's DTSTAMP visibly changes for clients that key off it), never
+ * `Date.now()`, so this stays pure. */
+function toUtcStamp(updatedAt: Date): string {
+  return updatedAt.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
 }
 
 function buildRrule(
@@ -142,13 +150,36 @@ function buildRrule(
   repeatWeekdays: number[] | null,
   repeatUntil: string | null,
   startTime: string | null,
+  startDate: string,
 ): string {
   const parts = [`FREQ=${FREQ_CODES[repeatFreq]}`];
   if (repeatInterval > 1) parts.push(`INTERVAL=${repeatInterval}`);
 
-  if (repeatFreq === "weekly" && repeatWeekdays?.length) {
-    const days = [...repeatWeekdays].sort((a, b) => a - b).map((d) => WEEKDAY_CODES[d]);
-    parts.push(`BYDAY=${days.join(",")}`);
+  if (repeatFreq === "weekly") {
+    // Sanitised the same way lib/recurrence.ts's own expansion is: the
+    // column has no CHECK constraint, so a raw out-of-range value (7, -1)
+    // must not be handed straight to WEEKDAY_CODES (which would emit
+    // `undefined`, e.g. the malformed `BYDAY=MO,`) and a duplicate must not
+    // repeat itself in the list. normaliseWeekdays always returns at least
+    // one day (it falls back to DTSTART's own weekday), so this branch is
+    // never actually empty in practice — the app's own null/absent case
+    // already expresses exactly that fallback, just spelled out explicitly
+    // here rather than left to an RRULE client's own implicit default.
+    const days = normaliseWeekdays(repeatWeekdays, parseISO(startDate));
+    if (days.length) {
+      parts.push(`BYDAY=${days.map((d) => WEEKDAY_CODES[d]).join(",")}`);
+    }
+    // RFC 5545 3.3.10 defaults an omitted WKST to MONDAY, but
+    // lib/recurrence.ts's weeklyDates anchors weeks on Sunday
+    // (startOfWeek(start, { weekStartsOn: 0 })). Left unstated, an
+    // RFC-faithful client's own week-boundary maths diverges from this
+    // app's at INTERVAL > 1 — e.g. a biweekly BYDAY=SU,SA series starting
+    // mid-week drifts its Sunday leg by a whole week every other cycle
+    // against a MONDAY-anchored reading, while WKST=SU reproduces this
+    // engine's dates exactly. It's a no-op at INTERVAL=1 (only one week to
+    // anchor), so it's cheaper to always emit it than to special-case when
+    // it matters.
+    parts.push("WKST=SU");
   }
 
   if (repeatUntil) {
@@ -172,7 +203,7 @@ function buildVevent(event: CalendarEvent, exdatesForEvent: Exdate[]): string[] 
   const lines: string[] = [
     "BEGIN:VEVENT",
     textLine("UID", `${event.id}@homesync`),
-    textLine("DTSTAMP", toUtcStamp(event.createdAt)),
+    textLine("DTSTAMP", toUtcStamp(event.updatedAt)),
   ];
 
   const { startTime } = event;
@@ -220,7 +251,14 @@ function buildVevent(event: CalendarEvent, exdatesForEvent: Exdate[]): string[] 
     lines.push(
       textLine(
         "RRULE",
-        buildRrule(event.repeatFreq, event.repeatInterval, event.repeatWeekdays, event.repeatUntil, startTime),
+        buildRrule(
+          event.repeatFreq,
+          event.repeatInterval,
+          event.repeatWeekdays,
+          event.repeatUntil,
+          startTime,
+          event.startDate,
+        ),
       ),
     );
     for (const exdate of exdatesForEvent) {
