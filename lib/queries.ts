@@ -18,6 +18,7 @@ import {
 import type { Exdate } from "@/lib/recurrence";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId, getCurrentUserId } from "./household";
+import { timed } from "./timing";
 import { isDbConfigured } from "@/db";
 
 /**
@@ -41,11 +42,13 @@ export const CACHE_TAGS = {
 
 const fetchShoppingItems = unstable_cache(
   (householdId: string) =>
-    getDb()
-      .select()
-      .from(shoppingItems)
-      .where(eq(shoppingItems.householdId, householdId))
-      .orderBy(asc(shoppingItems.createdAt)),
+    timed("shopping-items", () =>
+      getDb()
+        .select()
+        .from(shoppingItems)
+        .where(eq(shoppingItems.householdId, householdId))
+        .orderBy(asc(shoppingItems.createdAt)),
+    ),
   ["shopping-items"],
   { tags: [CACHE_TAGS.shoppingItems] },
 );
@@ -71,7 +74,8 @@ function selectCategories(householdId: string) {
 }
 
 const fetchShoppingCategories = unstable_cache(
-  (householdId: string) => selectCategories(householdId),
+  (householdId: string) =>
+    timed("shopping-categories", () => selectCategories(householdId)),
   ["shopping-categories"],
   { tags: [CACHE_TAGS.shoppingCategories] },
 );
@@ -108,11 +112,13 @@ export async function getShoppingCategories() {
 
 const fetchRecipes = unstable_cache(
   (householdId: string) =>
-    getDb()
-      .select()
-      .from(recipes)
-      .where(eq(recipes.householdId, householdId))
-      .orderBy(desc(recipes.createdAt)),
+    timed("recipes", () =>
+      getDb()
+        .select()
+        .from(recipes)
+        .where(eq(recipes.householdId, householdId))
+        .orderBy(desc(recipes.createdAt)),
+    ),
   ["recipes"],
   { tags: [CACHE_TAGS.recipes] },
 );
@@ -198,7 +204,7 @@ export async function getCalendarWindow(
   if (!householdId) return { events: [], exdates: [] };
 
   return unstable_cache(
-    () => selectCalendarWindow(householdId, from, to),
+    () => timed("calendar-window", () => selectCalendarWindow(householdId, from, to)),
     ["calendar-window", householdId, from, to],
     { tags: [CACHE_TAGS.calendarEvents] },
   )();
@@ -281,11 +287,13 @@ export async function getCurrentUserActivitySeenAt(): Promise<Date | null> {
 
 const fetchChores = unstable_cache(
   (householdId: string) =>
-    getDb()
-      .select()
-      .from(chores)
-      .where(eq(chores.householdId, householdId))
-      .orderBy(asc(chores.nextDueAt)),
+    timed("chores", () =>
+      getDb()
+        .select()
+        .from(chores)
+        .where(eq(chores.householdId, householdId))
+        .orderBy(asc(chores.nextDueAt)),
+    ),
   ["chores"],
   { tags: [CACHE_TAGS.chores] },
 );
@@ -304,11 +312,13 @@ export interface HouseholdMember {
 
 const fetchHouseholdMembers = unstable_cache(
   (householdId: string) =>
-    getDb()
-      .select({ id: users.id, name: users.name })
-      .from(users)
-      .where(eq(users.householdId, householdId))
-      .orderBy(asc(users.name)),
+    timed("household-members", () =>
+      getDb()
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(eq(users.householdId, householdId))
+        .orderBy(asc(users.name)),
+    ),
   ["household-members"],
   { tags: [CACHE_TAGS.users] },
 );
@@ -350,21 +360,23 @@ export async function getMemberLocations(): Promise<MemberLocation[]> {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
 
-  return getDb()
-    .select({
-      userId: users.id,
-      name: users.name,
-      sharing: users.locationSharing,
-      latitude: userLocations.latitude,
-      longitude: userLocations.longitude,
-      accuracyM: userLocations.accuracyM,
-      batteryPct: userLocations.batteryPct,
-      capturedAt: userLocations.capturedAt,
-    })
-    .from(users)
-    .leftJoin(userLocations, eq(userLocations.userId, users.id))
-    .where(eq(users.householdId, householdId))
-    .orderBy(asc(users.name));
+  return timed("member-locations", () =>
+    getDb()
+      .select({
+        userId: users.id,
+        name: users.name,
+        sharing: users.locationSharing,
+        latitude: userLocations.latitude,
+        longitude: userLocations.longitude,
+        accuracyM: userLocations.accuracyM,
+        batteryPct: userLocations.batteryPct,
+        capturedAt: userLocations.capturedAt,
+      })
+      .from(users)
+      .leftJoin(userLocations, eq(userLocations.userId, users.id))
+      .where(eq(users.householdId, householdId))
+      .orderBy(asc(users.name)),
+  );
 }
 
 /**
@@ -379,10 +391,12 @@ export async function getCurrentUserDarkMode(
   const userId = await getCurrentUserId(session);
   if (!userId) return false;
 
-  const [member] = await getDb()
-    .select({ darkMode: users.darkMode })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+  const [member] = await timed("user-dark-mode", () =>
+    getDb()
+      .select({ darkMode: users.darkMode })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1),
+  );
   return member?.darkMode ?? false;
 }
