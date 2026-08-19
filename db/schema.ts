@@ -26,6 +26,16 @@ import {
 export const households = pgTable("households", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
+  /**
+   * IANA timezone (PR 8; ADR 0009). The reminder sender runs on Vercel's UTC
+   * clock and has to convert a wall-clock reminder anchor (an event's
+   * `startTime`, or local midnight for an all-day event) into a UTC instant
+   * to know when to fire — a fixed numeric offset cannot do that safely,
+   * because Sydney's UTC offset itself changes at the October daylight-saving
+   * transition. `date-fns-tz`'s `fromZonedTime` (lib/reminder-instants.ts)
+   * needs exactly this string to resolve the correct offset for any given date.
+   */
+  timezone: text("timezone").notNull().default("Australia/Sydney"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -160,6 +170,17 @@ export const calendarEvents = pgTable(
     attendeeIds: jsonb("attendee_ids").$type<string[]>(),
     // Pinned events surface first in the agenda (a later PR); unpinned by default.
     pinned: boolean("pinned").notNull().default(false),
+    /**
+     * Reminders (PR 8; ADR 0009). Minutes BEFORE this event's reminder
+     * anchor: a timed event's anchor is its own `startTime`; an all-day
+     * event's anchor is local midnight (00:00) of `startDate`. A NEGATIVE
+     * value therefore fires AFTER the anchor — this is how an all-day
+     * "9:00 am on the day" reminder is expressed with no separate anchor
+     * column: -540 minutes before midnight is 540 minutes (9 hours) after
+     * it, i.e. 9:00 am. Null means no reminder is set. See
+     * lib/reminder-instants.ts for the wall-clock -> UTC-instant maths.
+     */
+    reminderMinutes: smallint("reminder_minutes"),
     // Bumped on every edit; updateCalendarEvent's last-write-wins guard compares
     // the caller's loaded value against this column in its WHERE clause.
     updatedAt: timestamp("updated_at", { precision: 3 })
@@ -224,6 +245,15 @@ export const calendarEvents = pgTable(
     // same reasoning as the chores table's range checks above: the DB is the
     // backstop for a write that ever bypasses the Server Action.
     check("calendar_events_repeat_interval_range", sql`${t.repeatInterval} between 1 and 99`),
+    // Mirrors normaliseEventInput's own -1440..1440 clamp (app/calendar/actions.ts)
+    // — same backstop reasoning as the two checks above. That range is
+    // itself capped at what lib/reminder-instants.ts's dueReminders can ever
+    // deliver (its expansion window only reaches about a day either side of
+    // "now"), not a wider "plausible" range.
+    check(
+      "calendar_events_reminder_minutes_range",
+      sql`${t.reminderMinutes} is null or ${t.reminderMinutes} between -1440 and 1440`,
+    ),
   ],
 );
 
@@ -306,6 +336,53 @@ export const activity = pgTable(
       sql`${t.verb} in ('created', 'updated', 'deleted', 'commented')`,
     ),
   ],
+);
+
+/**
+ * A device's Web Push subscription (PR 8; ADR 0009). One row per
+ * browser/device a member has tapped "Enable notifications" on — a member
+ * can have more than one (phone plus desktop), which is why this is keyed by
+ * its own `id` rather than `user_id`. `endpoint` is unique because it IS the
+ * push service's own identity for that device: upserting by endpoint
+ * (app/settings/actions.ts's `savePushSubscription`) is what makes
+ * re-subscribing — a fresh permission grant on the same device after iOS has
+ * silently revoked the old subscription — replace the stale row instead of
+ * duplicating it. `keys` holds the p256dh/auth pair `web-push` needs to
+ * encrypt a payload for this specific endpoint.
+ */
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  endpoint: text("endpoint").notNull().unique(),
+  keys: jsonb("keys").$type<{ p256dh: string; auth: string }>().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+/**
+ * The idempotency arbiter for the reminder sender route (PR 8; ADR 0009):
+ * one row per occurrence a reminder has actually been sent for. The sender
+ * INSERTs this row FIRST (`onConflictDoNothing`) and only pushes when that
+ * insert lands a genuinely new row — two overlapping or retried 5-minute
+ * pinger ticks racing the same due occurrence both attempt the identical
+ * insert, so only one of them ever sends, and a tick that runs late (an
+ * outage) still recognises an occurrence it already sent for. Cascades with
+ * its event: a deleted event has no future reminders left to guard, and its
+ * past send history serves no purpose once the event itself is gone. Keyed
+ * per OCCURRENCE (`event_id`, `occurrence_date`), not per event, because a
+ * recurring event reminds once per occurrence, not once ever.
+ */
+export const reminderLog = pgTable(
+  "reminder_log",
+  {
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => calendarEvents.id, { onDelete: "cascade" }),
+    occurrenceDate: date("occurrence_date").notNull(),
+    sentAt: timestamp("sent_at").defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.occurrenceDate] })],
 );
 
 /**
@@ -395,6 +472,10 @@ export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type EventExdate = typeof eventExdates.$inferSelect;
 export type EventComment = typeof eventComments.$inferSelect;
 export type Activity = typeof activity.$inferSelect;
+// Named "Row", not "PushSubscription" — the DOM lib already owns that name
+// for the browser's own Web Push API type, and this file is imported from
+// client components that also talk to that API (app/settings/notifications.tsx).
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type UserLocation = typeof userLocations.$inferSelect;

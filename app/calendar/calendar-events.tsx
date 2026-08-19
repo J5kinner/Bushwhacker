@@ -129,6 +129,25 @@ const REPEAT_UNIT_LABEL: Record<RepeatFreq, string> = {
   yearly: "year(s)",
 };
 
+// Duplicated in event-sheet.tsx alongside its own Reminder section, same
+// import-cycle reason as inputClass/chipClass/WEEKDAY_LABELS above. See that
+// file's comment for why the two option sets differ (lib/reminder-instants.ts).
+const TIMED_REMINDER_OPTIONS: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: "None" },
+  { minutes: 0, label: "At start" },
+  { minutes: 10, label: "10 minutes before" },
+  { minutes: 30, label: "30 minutes before" },
+  { minutes: 60, label: "1 hour before" },
+  { minutes: 1440, label: "1 day before" },
+];
+
+const ALL_DAY_REMINDER_OPTIONS: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: "None" },
+  { minutes: -540, label: "Morning of (9:00 am)" },
+  { minutes: 360, label: "Evening before (6:00 pm)" },
+  { minutes: 900, label: "Day before (9:00 am)" },
+];
+
 export function CalendarEvents({
   initialEvents,
   exdates,
@@ -209,6 +228,7 @@ export function CalendarEvents({
   const [colour, setColour] = useState<string | null>(null);
   const [attendeeIds, setAttendeeIds] = useState<string[] | null>(null);
   const [notes, setNotes] = useState("");
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
   const [repeatFreq, setRepeatFreq] = useState<RepeatFreq | null>(null);
   const [repeatInterval, setRepeatInterval] = useState(1);
   const [repeatWeekdays, setRepeatWeekdays] = useState<number[] | null>(null);
@@ -296,6 +316,7 @@ export function CalendarEvents({
       repeatInterval,
       repeatWeekdays,
       repeatUntil: repeatUntil || null,
+      reminderMinutes,
     };
     const temp: CalendarEvent = {
       id: crypto.randomUUID(),
@@ -320,6 +341,7 @@ export function CalendarEvents({
     setColour(null);
     setAttendeeIds(null);
     setNotes("");
+    setReminderMinutes(null);
     setRepeatFreq(null);
     setRepeatInterval(1);
     setRepeatWeekdays(null);
@@ -375,7 +397,12 @@ export function CalendarEvents({
             <span className="text-sm">All day</span>
             <Switch
               checked={allDay}
-              onCheckedChange={setAllDay}
+              onCheckedChange={(next) => {
+                setAllDay(next);
+                // See event-sheet.tsx's identical reset for why: the two
+                // reminder option sets aren't interchangeable.
+                setReminderMinutes(null);
+              }}
               aria-label="All day"
             />
           </div>
@@ -578,6 +605,25 @@ export function CalendarEvents({
                 </label>
               </div>
             )}
+          </div>
+
+          {/* Reminder select (PR 8; ADR 0009) — see event-sheet.tsx's identical section. */}
+          <div>
+            <p className="mb-1.5 text-xs text-zinc-500">Reminder</p>
+            <select
+              value={reminderMinutes === null ? "none" : String(reminderMinutes)}
+              onChange={(e) =>
+                setReminderMinutes(e.target.value === "none" ? null : Number(e.target.value))
+              }
+              className={`w-full ${inputClass}`}
+              aria-label="Reminder"
+            >
+              {(allDay ? ALL_DAY_REMINDER_OPTIONS : TIMED_REMINDER_OPTIONS).map((opt) => (
+                <option key={opt.label} value={opt.minutes === null ? "none" : opt.minutes}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <button

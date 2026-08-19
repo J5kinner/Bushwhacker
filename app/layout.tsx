@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { BottomNav } from "@/components/bottom-nav";
 import { LiveRefresh } from "@/components/live-refresh";
+import { PushResubscribe } from "@/components/push-resubscribe";
 import { SwRegister } from "@/components/sw-register";
 import { auth } from "@/auth";
 import { getCurrentUserDarkMode } from "@/lib/queries";
@@ -54,6 +55,7 @@ export default async function RootLayout({
             </main>
             <BottomNav />
             <LiveRefresh />
+            <PushResubscribe />
           </div>
         ) : (
           // Unauthenticated (e.g. the sign-in page): no nav chrome.

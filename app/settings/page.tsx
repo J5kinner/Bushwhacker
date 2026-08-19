@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { SetupNotice } from "@/components/db-notice";
 import { CategoryManager } from "./category-manager";
 import { LocationSetup } from "./location-setup";
+import { NotificationsSettings } from "./notifications";
 import { ThemeToggle } from "./theme-toggle";
 
 export const dynamic = "force-dynamic";
@@ -128,6 +129,13 @@ export default async function SettingsPage() {
           Location sharing
         </h2>
         <LocationSetup initialToken={locationToken} endpoint={endpoint} />
+      </section>
+
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          Notifications
+        </h2>
+        <NotificationsSettings />
       </section>
 
       <section className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
