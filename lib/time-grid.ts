@@ -133,6 +133,13 @@ export function timedBlocksForDay(occurrences: Occurrence[], day: string): Timed
   let groupEnd = -Infinity; // the running group's furthest-reaching bottom edge so far
   for (let i = 0; i < extents.length; i++) {
     const e = extents[i];
+    // Strictly less-than: at minute granularity, a block starting exactly
+    // when the group's last one ends (09:00-10:00 then 10:00-11:00) shares
+    // no actual minute with it, so it's genuinely non-overlapping and starts
+    // a fresh group. This is the opposite call from lib/month-lanes.ts's own
+    // `<` check on day COLUMNS, where sharing a boundary day still means both
+    // occurrences are visibly on-screen that same day and need separate
+    // lanes — there's no such shared-cell ambiguity here.
     if (e.topMinutes < groupEnd) {
       groupEnd = Math.max(groupEnd, e.topMinutes + e.heightMinutes);
     } else {

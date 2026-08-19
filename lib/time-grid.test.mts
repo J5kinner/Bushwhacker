@@ -86,6 +86,19 @@ test("two overlapping blocks split into 2 columns", () => {
   assert.deepEqual(columns, [0, 1]);
 });
 
+test("two blocks touching exactly at a boundary (A ends when B starts) do not overlap", () => {
+  // A 09:00-10:00, B 10:00-11:00: they share no actual minute, so this locks
+  // in the strict `<` check in timedBlocksForDay — end == start is NOT an
+  // overlap, unlike lib/month-lanes.ts's day-granularity lane packing, where
+  // sharing a boundary DAY still means both are visibly on-screen together.
+  const a = makeOccurrence("a", DAY, "09:00", "10:00");
+  const b = makeOccurrence("b", DAY, "10:00", "11:00");
+  const blocks = timedBlocksForDay([a, b], DAY);
+
+  assert.equal(blocks.length, 2);
+  for (const block of blocks) assert.equal(block.columns, 1);
+});
+
 test("three transitively-overlapping blocks (A-B, B-C, not A-C) form one group of 3 columns", () => {
   // A: 09:00-10:00, B: 09:30-11:00, C: 10:30-11:30 — A and C never overlap
   // directly, but the chain through B still puts all three in one group.
@@ -106,6 +119,13 @@ test("a null endTime defaults to a 60-minute block", () => {
   const a = makeOccurrence("a", DAY, "13:00", null);
   const [block] = timedBlocksForDay([a], DAY);
   assert.equal(block.topMinutes, 13 * 60);
+  assert.equal(block.heightMinutes, 60);
+});
+
+test("HH:MM:SS strings (the actual shape Drizzle returns from a Postgres time column) parse correctly", () => {
+  const a = makeOccurrence("a", DAY, "09:00:00", "10:00:00");
+  const [block] = timedBlocksForDay([a], DAY);
+  assert.equal(block.topMinutes, 9 * 60);
   assert.equal(block.heightMinutes, 60);
 });
 

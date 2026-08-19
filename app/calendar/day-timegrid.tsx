@@ -42,6 +42,22 @@ function formatHourLabel(hour: number): string {
   return format(d, "h a").toLowerCase();
 }
 
+/**
+ * A "HH:mm" (or "HH:mm:ss", the shape Drizzle's Postgres `time` columns
+ * actually come back as) wall-clock string as a device-local "9:00 am".
+ * Duplicated from agenda.tsx/day-sheet.tsx rather than imported — those
+ * files export no helpers, only components — but kept byte-for-byte the same
+ * behaviour so a time reads identically everywhere in the calendar tab,
+ * including the block sub-label below, which used to print the raw
+ * 24-hour string instead of matching this file's own formatHourLabel.
+ */
+function formatTime(time: string): string {
+  const [hours, minutes] = time.split(":").map(Number);
+  const d = new Date();
+  d.setHours(hours, minutes, 0, 0);
+  return format(d, "h:mm a").toLowerCase();
+}
+
 // Server-rendered HTML runs in UTC; the device viewing it may already be
 // 10-11 hours ahead, so reading the device clock straight off `new Date()`
 // during render would make this component's SSR output and its first
@@ -325,7 +341,7 @@ export function DayTimeGrid({ occurrences, anchorMonth, onOccurrenceClick }: Cal
                         <span className="block truncate font-medium">{block.occurrence.event.title}</span>
                         {/* Only shown once the block is tall enough to fit a second line without crowding the title. */}
                         {block.heightMinutes >= 45 && block.occurrence.event.startTime && (
-                          <span className="block truncate opacity-80">{block.occurrence.event.startTime.slice(0, 5)}</span>
+                          <span className="block truncate opacity-80">{formatTime(block.occurrence.event.startTime)}</span>
                         )}
                       </button>
                     );
