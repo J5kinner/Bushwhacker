@@ -11,8 +11,11 @@ import {
   check,
   unique,
   index,
+  uniqueIndex,
   jsonb,
   doublePrecision,
+  primaryKey,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -154,10 +157,84 @@ export const calendarEvents = pgTable(
       .defaultNow()
       .notNull()
       .$onUpdate(() => new Date()),
+
+    /**
+     * Recurrence (PR 4, M2; see ADR 0007 and lib/recurrence.ts, which this
+     * schema structurally satisfies via `ExpandableEvent`). `repeatFreq` null
+     * means a plain, non-recurring row — every other repeat* column is then
+     * meaningless and normalised to null by the server actions
+     * (`repeatInterval` keeps its not-null default of 1 regardless, since a
+     * column can't be conditionally nullable). `seriesId`/`originalDate`
+     * together mark a standalone override row: `seriesId` points at the
+     * master it replaces one occurrence of, `originalDate` is the date on the
+     * master it replaces. A plain event and a recurrence master both leave
+     * both of those null.
+     */
+    repeatFreq: text("repeat_freq", {
+      enum: ["daily", "weekly", "monthly", "yearly"],
+    }),
+    repeatInterval: smallint("repeat_interval").notNull().default(1),
+    repeatWeekdays: jsonb("repeat_weekdays").$type<number[]>(),
+    repeatUntil: date("repeat_until"),
+    // Self-FK, deliberately `onDelete: "cascade"` — every other FK in this
+    // schema defaults to "no action" — so deleting a master takes its
+    // override rows with it in the same statement; an override left behind
+    // with a dangling seriesId would be a permanently un-editable ghost
+    // event, which is worse than losing it outright. The explicit
+    // `AnyPgColumn` return type on the callback sidesteps Drizzle's
+    // circular-inference error for a same-table self-reference (this column
+    // needs `calendarEvents.id`, but `calendarEvents` isn't done being
+    // inferred yet at the point this line runs).
+    seriesId: uuid("series_id").references((): AnyPgColumn => calendarEvents.id, {
+      onDelete: "cascade",
+    }),
+    originalDate: date("original_date"),
   },
   (t) => [
     index("calendar_events_household_start_idx").on(t.householdId, t.startDate),
+    // Partial — only override rows carry a seriesId — so two concurrent
+    // "edit this occurrence" calls for the same master/date collide on this
+    // index instead of both inserting: editOccurrence's onConflictDoUpdate
+    // targets exactly (seriesId, originalDate) under this same predicate, so
+    // the second edit replaces the first override rather than duplicating
+    // the occurrence.
+    uniqueIndex("calendar_events_series_original_uq")
+      .on(t.seriesId, t.originalDate)
+      .where(sql`${t.seriesId} is not null`),
+    // No DB CHECK constrains repeatFreq's *enum* beyond this — Drizzle's
+    // `{ enum: [...] }` is TypeScript-only — so a stray "biweekly" from a
+    // future/buggy caller is rejected at the column level, not just by the
+    // server action's own validation (which lib/recurrence.ts's own tests
+    // already assume can't be trusted: an unrecognised value there expands
+    // to nothing, deliberately fail-closed).
+    check(
+      "calendar_events_repeat_freq_valid",
+      sql`${t.repeatFreq} is null or ${t.repeatFreq} in ('daily', 'weekly', 'monthly', 'yearly')`,
+    ),
+    // Mirrors the action layer's own 1..99 clamp (app/calendar/actions.ts) —
+    // same reasoning as the chores table's range checks above: the DB is the
+    // backstop for a write that ever bypasses the Server Action.
+    check("calendar_events_repeat_interval_range", sql`${t.repeatInterval} between 1 and 99`),
   ],
+);
+
+/**
+ * Suppressed occurrences of a recurring master: one row per (event, date)
+ * pair that should be hidden from expansion. Relational rather than a jsonb
+ * array on the master, so a concurrent "delete this occurrence" is a plain
+ * `INSERT ... ON CONFLICT DO NOTHING` instead of a read-modify-write race
+ * that could silently drop somebody else's delete of a different date on the
+ * same event (design decision 3 of the shared-calendar plan; ADR 0007).
+ */
+export const eventExdates = pgTable(
+  "event_exdates",
+  {
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => calendarEvents.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.eventId, t.date] })],
 );
 
 /**
@@ -244,6 +321,7 @@ export type ShoppingItem = typeof shoppingItems.$inferSelect;
 export type Recipe = typeof recipes.$inferSelect;
 export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
+export type EventExdate = typeof eventExdates.$inferSelect;
 export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type UserLocation = typeof userLocations.$inferSelect;

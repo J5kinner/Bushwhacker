@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { Session } from "next-auth";
 import { getDb } from "@/db";
 import type { CalendarEvent } from "@/db/schema";
@@ -7,6 +7,7 @@ import {
   shoppingItems,
   shoppingCategories,
   calendarEvents,
+  eventExdates,
   chores,
   recipes,
   users,
@@ -119,29 +120,63 @@ export async function getRecipes() {
   return fetchRecipes(householdId);
 }
 
-function selectCalendarWindow(householdId: string, from: string, to: string) {
-  return getDb()
-    .select()
-    .from(calendarEvents)
-    .where(
-      and(
-        eq(calendarEvents.householdId, householdId),
-        lte(calendarEvents.startDate, to),
-        // A trip's endDate can be null (single-day event); its effective end
-        // for overlap purposes is then its own startDate.
-        gte(sql`coalesce(${calendarEvents.endDate}, ${calendarEvents.startDate})`, from),
-      ),
-    )
-    .orderBy(asc(calendarEvents.startDate));
+async function selectCalendarWindow(
+  householdId: string,
+  from: string,
+  to: string,
+): Promise<{ events: CalendarEvent[]; exdates: Exdate[] }> {
+  const db = getDb();
+
+  const [events, exdates] = await Promise.all([
+    db
+      .select()
+      .from(calendarEvents)
+      .where(
+        and(
+          eq(calendarEvents.householdId, householdId),
+          or(
+            // A plain event (or override row) overlaps the window at its own
+            // dates. A trip's endDate can be null (single-day event); its
+            // effective end for overlap purposes is then its own startDate.
+            and(
+              lte(calendarEvents.startDate, to),
+              gte(sql`coalesce(${calendarEvents.endDate}, ${calendarEvents.startDate})`, from),
+            ),
+            // A recurrence master can have started long before `from` and
+            // still generate occurrences inside the window (a weekly event
+            // from years ago, say) — its own span is irrelevant here, only
+            // whether it's still repeating by the time the window opens.
+            and(
+              isNotNull(calendarEvents.repeatFreq),
+              lte(calendarEvents.startDate, to),
+              or(isNull(calendarEvents.repeatUntil), gte(calendarEvents.repeatUntil, from)),
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(calendarEvents.startDate)),
+    // Exdates for this household's events, joined back to calendar_events
+    // because event_exdates carries no household_id of its own — the join is
+    // the household scope. Mapped to the lib's `Exdate` shape ({ eventId,
+    // date }) so this file stays the only place that knows the DB column is
+    // called event_id.
+    db
+      .select({ eventId: eventExdates.eventId, date: eventExdates.date })
+      .from(eventExdates)
+      .innerJoin(calendarEvents, eq(eventExdates.eventId, calendarEvents.id))
+      .where(eq(calendarEvents.householdId, householdId)),
+  ]);
+
+  return { events, exdates };
 }
 
 /**
  * Raw event rows overlapping the inclusive `[from, to]` "YYYY-MM-DD" window,
  * plus their exdates — the caller runs `expandOccurrences` (lib/recurrence.ts)
- * over the result to get concrete Occurrence[]. This function only wraps the
- * read in `unstable_cache`, tagged (not keyed) by `calendarEvents` so any
- * mutation's tag bust invalidates every open window's cache entry, not just
- * the one that happened to be current when the mutation landed.
+ * over the result to get concrete Occurrence[]. Both queries live inside this
+ * one `unstable_cache` call (same key, same tag) so a mutation's single
+ * `updateTag(CACHE_TAGS.calendarEvents)` busts events and exdates together —
+ * there is no way for one to go stale while the other refreshes.
  *
  * CRITICAL: `from`/`to` are always the caller's window bounds (see
  * app/calendar/page.tsx) — never derive them from `Date.now()`/"today" in
@@ -158,18 +193,11 @@ export async function getCalendarWindow(
   const householdId = await getHouseholdId();
   if (!householdId) return { events: [], exdates: [] };
 
-  const events = await unstable_cache(
+  return unstable_cache(
     () => selectCalendarWindow(householdId, from, to),
     ["calendar-window", householdId, from, to],
     { tags: [CACHE_TAGS.calendarEvents] },
   )();
-
-  // PR 4 populates this from event_exdates and extends selectCalendarWindow to
-  // also pull in recurrence masters that started before `from` but still
-  // generate occurrences inside the window.
-  const exdates: Exdate[] = [];
-
-  return { events, exdates };
 }
 
 const fetchChores = unstable_cache(

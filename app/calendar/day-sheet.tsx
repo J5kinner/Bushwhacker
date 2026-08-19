@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { format, parseISO } from "date-fns";
 import { X } from "lucide-react";
-import type { CalendarEvent } from "@/db/schema";
 import type { HouseholdMember } from "@/lib/queries";
 import type { Occurrence } from "@/lib/recurrence";
 import { eventColourHex } from "@/lib/event-colours";
@@ -63,7 +62,7 @@ export function DaySheet({
   date: string;
   occurrences: Occurrence[];
   members: HouseholdMember[];
-  onOccurrenceClick: (event: CalendarEvent) => void;
+  onOccurrenceClick: (occurrence: Occurrence) => void;
   onClose: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -94,10 +93,10 @@ export function DaySheet({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  // The parallel recurrence PR retargets onOccurrenceClick from
-  // (event: CalendarEvent) to (occurrence: Occurrence); every call goes
-  // through this one wrapper so that rebase touches only this line.
-  const openOccurrence = (occurrence: Occurrence) => onOccurrenceClick(occurrence.event);
+  // Every occurrence-open goes through this one wrapper so contract changes
+  // touch a single line; it now forwards the full occurrence, which the
+  // event sheet needs to offer this-occurrence-vs-whole-series editing.
+  const openOccurrence = (occurrence: Occurrence) => onOccurrenceClick(occurrence);
 
   function handleRowClick(occurrence: Occurrence) {
     openOccurrence(occurrence);
