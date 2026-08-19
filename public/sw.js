@@ -53,3 +53,43 @@ self.addEventListener("fetch", (event) => {
       ),
   );
 });
+
+// Push notifications (PR 8, calendar reminders + partner-activity pushes;
+// see ADR 0009). ALWAYS shows a visible notification, even for a payload
+// that fails to parse — a push event with no visible notification gets this
+// subscription revoked by Safari after roughly three in a row, so there is
+// no such thing as a push worth silently swallowing.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = data.title || "HomeSync";
+  const body = data.body || "";
+  const url = data.url || "/calendar";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      data: { url },
+      // Deliberately no `actions` buttons: iOS ignores them outright, so
+      // they would only ever appear (and do anything) on other platforms —
+      // not worth the inconsistency for a two-person household's shared set
+      // of phones.
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/calendar";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.includes(url) && "focus" in client) return client.focus();
+      }
+      return self.clients.openWindow(url);
+    }),
+  );
+});

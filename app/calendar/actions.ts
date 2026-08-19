@@ -7,6 +7,10 @@ import { activity, calendarEvents, eventComments, eventExdates, users } from "@/
 import { getHouseholdId, getCurrentUserId } from "@/lib/household";
 import { CACHE_TAGS, getHouseholdMembers } from "@/lib/queries";
 import { isEventColour } from "@/lib/event-colours";
+import { sendPushToUsers } from "@/lib/push";
+
+const MIN_REMINDER_MINUTES = -1440;
+const MAX_REMINDER_MINUTES = 10080;
 
 const MAX_COMMENT_LENGTH = 1000;
 
@@ -32,6 +36,49 @@ async function recordActivity(params: {
     await getDb().insert(activity).values(params);
   } catch {
     // Best-effort — see the doc comment above.
+  }
+}
+
+const ACTIVITY_VERB_PHRASE: Record<ActivityVerb, string> = {
+  created: "added",
+  updated: "updated",
+  deleted: "removed",
+  commented: "commented on",
+};
+
+/**
+ * Best-effort partner push notification (PR 8; ADR 0009), fired alongside
+ * `recordActivity` from every mutation that already writes one — the
+ * shared-calendar plan calls this out as one of the reminders PR's two push
+ * surfaces (the reminder sender route, app/api/reminders/run/route.ts, is
+ * the other). Sent to every household member EXCEPT the actor, reusing
+ * `getHouseholdMembers()` rather than a bespoke query — the household is
+ * always small, and this already runs after the mutation has committed.
+ *
+ * `togglePinned` deliberately calls neither this nor `recordActivity` (see
+ * its own doc comment) — a personal triage flag flipped in passing isn't
+ * something the other member needs pinged about.
+ */
+async function notifyPartner(params: {
+  actorId: string | null;
+  verb: ActivityVerb;
+  eventTitle: string;
+  startDate?: string | null;
+}) {
+  try {
+    const members = await getHouseholdMembers();
+    const recipients = members.filter((m) => m.id !== params.actorId).map((m) => m.id);
+    if (recipients.length === 0) return;
+
+    const actorName = members.find((m) => m.id === params.actorId)?.name ?? "Someone";
+    const month = (params.startDate ?? new Date().toISOString()).slice(0, 7);
+    await sendPushToUsers(recipients, {
+      title: `${actorName} ${ACTIVITY_VERB_PHRASE[params.verb]} "${params.eventTitle}"`,
+      body: "",
+      url: `/calendar?m=${month}`,
+    });
+  } catch {
+    // Best-effort — see recordActivity's own doc comment above.
   }
 }
 
@@ -62,6 +109,7 @@ export interface CalendarEventInput {
   repeatInterval?: number | null;
   repeatWeekdays?: number[] | null;
   repeatUntil?: string | null;
+  reminderMinutes?: number | null;
 }
 
 function isHttpUrl(value: string): boolean {
@@ -88,6 +136,7 @@ type NormalisedFields = {
   repeatInterval: number;
   repeatWeekdays: number[] | null;
   repeatUntil: string | null;
+  reminderMinutes: number | null;
 };
 
 type NormaliseResult =
@@ -181,6 +230,22 @@ async function normaliseEventInput(
     return { ok: false, reason: "Repeat until can't be before the start date." };
   }
 
+  // -1440..10080: minutes BEFORE the reminder anchor (db/schema.ts's own
+  // comment on `reminderMinutes`), wide enough to cover every preset the
+  // event sheet offers (from -540, the all-day "morning of", to 1440, the
+  // timed "1 day before") plus headroom — mirrored by the DB-level CHECK
+  // constraint (calendar_events_reminder_minutes_range) as a backstop for a
+  // write that ever bypasses this validation.
+  const reminderMinutes = input.reminderMinutes ?? null;
+  if (
+    reminderMinutes !== null &&
+    (!Number.isInteger(reminderMinutes) ||
+      reminderMinutes < MIN_REMINDER_MINUTES ||
+      reminderMinutes > MAX_REMINDER_MINUTES)
+  ) {
+    return { ok: false, reason: "Invalid reminder offset." };
+  }
+
   return {
     ok: true,
     fields: {
@@ -198,6 +263,7 @@ async function normaliseEventInput(
       repeatInterval,
       repeatWeekdays,
       repeatUntil,
+      reminderMinutes,
     },
   };
 }
@@ -226,6 +292,12 @@ export async function addCalendarEvent(
       eventTitle: result.fields.title,
     });
     updateTag(CACHE_TAGS.activity);
+    await notifyPartner({
+      actorId: createdById,
+      verb: "created",
+      eventTitle: result.fields.title,
+      startDate: result.fields.startDate,
+    });
   }
 
   return {};
@@ -301,6 +373,12 @@ export async function updateCalendarEvent(
       eventTitle: fields.title,
     });
     updateTag(CACHE_TAGS.activity);
+    await notifyPartner({
+      actorId,
+      verb: "updated",
+      eventTitle: fields.title,
+      startDate: fields.startDate,
+    });
   }
 
   return { conflict: updated.length === 0 };
@@ -333,6 +411,7 @@ export async function deleteCalendarEvent(id: string) {
       eventTitle: deleted.title,
     });
     updateTag(CACHE_TAGS.activity);
+    await notifyPartner({ actorId, verb: "deleted", eventTitle: deleted.title });
   }
 }
 
@@ -449,6 +528,7 @@ export async function deleteOccurrence(eventId: string, date: string): Promise<v
     eventTitle: master.title,
   });
   updateTag(CACHE_TAGS.activity);
+  await notifyPartner({ actorId, verb: "updated", eventTitle: master.title, startDate: date });
 }
 
 /**
@@ -554,6 +634,12 @@ export async function editOccurrence(
     eventTitle: result.fields.title,
   });
   updateTag(CACHE_TAGS.activity);
+  await notifyPartner({
+    actorId: createdById,
+    verb: "updated",
+    eventTitle: result.fields.title,
+    startDate: result.fields.startDate,
+  });
 
   return {};
 }
@@ -597,7 +683,7 @@ export async function addComment(
   if (!householdId) return {};
 
   const [event] = await getDb()
-    .select({ id: calendarEvents.id, title: calendarEvents.title })
+    .select({ id: calendarEvents.id, title: calendarEvents.title, startDate: calendarEvents.startDate })
     .from(calendarEvents)
     .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.householdId, householdId)))
     .limit(1);
@@ -615,6 +701,12 @@ export async function addComment(
     eventTitle: event.title,
   });
   updateTag(CACHE_TAGS.activity);
+  await notifyPartner({
+    actorId: authorId,
+    verb: "commented",
+    eventTitle: event.title,
+    startDate: event.startDate,
+  });
 
   return {};
 }

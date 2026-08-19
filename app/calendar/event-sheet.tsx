@@ -48,6 +48,31 @@ const REPEAT_UNIT_LABEL: Record<RepeatFreq, string> = {
 };
 
 /**
+ * Reminder presets (PR 8; ADR 0009), duplicated in calendar-events.tsx's add
+ * form for the same import-cycle reason as inputClass/chipClass/WEEKDAY_LABELS
+ * above. The set differs for a timed vs all-day event because their anchors
+ * differ (lib/reminder-instants.ts): a timed event's anchor is its own start
+ * time, so these are plain minutes-before; an all-day event's anchor is local
+ * midnight, so a wall-clock time on or before the day is expressed as a
+ * negative-or-positive offset from that midnight.
+ */
+const TIMED_REMINDER_OPTIONS: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: "None" },
+  { minutes: 0, label: "At start" },
+  { minutes: 10, label: "10 minutes before" },
+  { minutes: 30, label: "30 minutes before" },
+  { minutes: 60, label: "1 hour before" },
+  { minutes: 1440, label: "1 day before" },
+];
+
+const ALL_DAY_REMINDER_OPTIONS: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: "None" },
+  { minutes: -540, label: "Morning of (9:00 am)" },
+  { minutes: 360, label: "Evening before (6:00 pm)" },
+  { minutes: 900, label: "Day before (9:00 am)" },
+];
+
+/**
  * The bottom sheet opened by tapping an occurrence in the agenda list: a full
  * edit form for every event-model-v2 field plus recurrence, pre-filled from
  * the occurrence the sheet was opened for, plus the pin toggle and the
@@ -137,6 +162,7 @@ export function EventSheet({
     event.attendeeIds,
   );
   const [notes, setNotes] = useState(event.notes ?? "");
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(event.reminderMinutes);
   const [pinned, setPinned] = useState(event.pinned);
   const [repeatFreq, setRepeatFreq] = useState<RepeatFreq | null>(event.repeatFreq);
   const [repeatInterval, setRepeatInterval] = useState(event.repeatInterval || 1);
@@ -234,6 +260,7 @@ export function EventSheet({
       repeatInterval,
       repeatWeekdays,
       repeatUntil: repeatUntil || null,
+      reminderMinutes,
     };
   }
 
@@ -468,7 +495,15 @@ export function EventSheet({
             <span className="text-sm">All day</span>
             <Switch
               checked={allDay}
-              onCheckedChange={setAllDay}
+              onCheckedChange={(next) => {
+                setAllDay(next);
+                // The reminder presets differ for a timed vs all-day event
+                // (see TIMED_REMINDER_OPTIONS/ALL_DAY_REMINDER_OPTIONS above)
+                // — a value from one set is meaningless against the other,
+                // so switching clears it rather than silently keeping a
+                // now-invalid offset.
+                setReminderMinutes(null);
+              }}
               aria-label="All day"
             />
           </div>
@@ -688,6 +723,30 @@ export function EventSheet({
               )}
             </div>
           )}
+
+          {/*
+            Reminder section (PR 8; ADR 0009). A master's own reminderMinutes
+            applies to every generated occurrence, same as its repeat* fields
+            — an override row (or "this only" save below) can set its own,
+            independent reminder.
+          */}
+          <div>
+            <p className="mb-1.5 text-xs text-zinc-500">Reminder</p>
+            <select
+              value={reminderMinutes === null ? "none" : String(reminderMinutes)}
+              onChange={(e) =>
+                setReminderMinutes(e.target.value === "none" ? null : Number(e.target.value))
+              }
+              className={`w-full ${inputClass}`}
+              aria-label="Reminder"
+            >
+              {(allDay ? ALL_DAY_REMINDER_OPTIONS : TIMED_REMINDER_OPTIONS).map((opt) => (
+                <option key={opt.label} value={opt.minutes === null ? "none" : opt.minutes}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/*
             Comments section. Text only, deliberately labelled "Comments" —
