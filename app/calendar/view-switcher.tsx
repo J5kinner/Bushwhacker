@@ -5,6 +5,7 @@ import type { ComponentType } from "react";
 import type { Occurrence } from "@/lib/recurrence";
 import type { HouseholdMember } from "@/lib/queries";
 import { Agenda } from "./agenda";
+import { DayTimeGrid } from "./day-timegrid";
 import { MonthGrid } from "./month-grid";
 
 /**
@@ -53,6 +54,7 @@ export interface CalendarViewDefinition {
 export const VIEWS: CalendarViewDefinition[] = [
   { id: "month", label: "Month", component: MonthGrid },
   { id: "agenda", label: "Agenda", component: Agenda },
+  { id: "day", label: "Day", component: DayTimeGrid },
 ];
 
 const DEFAULT_VIEW_ID = VIEWS[0].id;
