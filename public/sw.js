@@ -86,10 +86,19 @@ self.addEventListener("notificationclick", (event) => {
   const url = (event.notification.data && event.notification.data.url) || "/calendar";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if (client.url.includes(url) && "focus" in client) return client.focus();
-      }
-      return self.clients.openWindow(url);
+      const client = clientList[0];
+      if (!client) return self.clients.openWindow(url);
+      // Navigate the existing window to the notification's own deep link,
+      // rather than just focusing whatever it already had open — an app
+      // already open on /calendar at a different month would otherwise
+      // never land on the month the reminder is actually about. `navigate`
+      // can reject for an uncontrolled client (one opened before this
+      // service worker took control of it), so a failed navigate still
+      // opens a fresh window rather than the click doing nothing.
+      return client
+        .navigate(url)
+        .then((navigated) => (navigated || client).focus())
+        .catch(() => self.clients.openWindow(url));
     }),
   );
 });

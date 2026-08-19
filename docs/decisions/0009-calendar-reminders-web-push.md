@@ -98,11 +98,12 @@ text; `togglePinned` fires neither, for the same reason it already skips `record
 - The sender's own freshness depends entirely on the external pinger actually running every five
   minutes; the 24-hour catch-up window absorbs a missed tick or two, but a pinger that stops
   altogether stops reminders altogether, silently, with nothing in this PR to alert on it.
-- `lib/reminder-instants.ts`'s `dueReminders` window (yesterday through tomorrow+1 in the
-  household's own calendar day) is sized for the reminder picker's own presets, not the full
-  `-1440..10080` range the server actions validate — a caller who somehow sets a reminder minutes
-  value near the outer edge of that validated range, well beyond anything the UI offers, could see
-  it never fire; revisit the window's width together if the picker's own preset range ever grows.
+- The `-1440..1440` range the server actions and the DB CHECK both validate is deliberately equal
+  to what `lib/reminder-instants.ts`'s `dueReminders` window (yesterday through tomorrow+1 in the
+  household's own calendar day) can ever actually deliver, not a wider "plausible" range — a value
+  outside it is rejected outright rather than accepted and silently never firing. If the reminder
+  picker's own preset range ever needs to grow beyond a day either side of the anchor, the
+  validated range and the expansion window must widen together, in the same change.
 - Push is untestable under `pnpm dev` (the service worker only registers in production); the
   Vercel preview, with the VAPID/`CRON_SECRET` env vars set, is where PR 8 must actually be
   verified end-to-end.

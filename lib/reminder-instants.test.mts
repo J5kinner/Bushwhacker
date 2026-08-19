@@ -93,6 +93,21 @@ test("reminderInstant: the AEDT daylight-saving transition (first Sunday of Octo
   assert.equal(preTransition.toISOString(), "2026-10-02T23:00:00.000Z");
 });
 
+test("reminderInstant: a wall-clock time inside the spring-forward gap (02:30 on 2026-10-04, which never occurs locally) still resolves deterministically", () => {
+  // Sydney's clocks jump from 2:00am straight to 3:00am on 2026-10-04, so
+  // 2:30am that day is not a real local moment — but the native <input
+  // type="time"> the event sheet uses has no way to forbid entering it, so
+  // this locks in whatever date-fns-tz actually does with it (resolves
+  // using the post-transition, AEDT/UTC+11 offset) rather than leaving it
+  // to silently vary across a library upgrade.
+  const instant = reminderInstant(
+    { date: "2026-10-04", event: { startTime: "02:30:00" } },
+    0,
+    SYDNEY,
+  );
+  assert.equal(instant.toISOString(), "2026-10-03T15:30:00.000Z");
+});
+
 // ---- dueReminders ----
 
 test("dueReminders: catch-up window includes the exact `now` boundary", () => {

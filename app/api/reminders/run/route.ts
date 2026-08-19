@@ -3,7 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { calendarEvents, eventExdates, households, reminderLog, users } from "@/db/schema";
 import { dueReminders } from "@/lib/reminder-instants";
-import { sendPushToUsers } from "@/lib/push";
+import { isPushConfigured, sendPushToUsers } from "@/lib/push";
 
 /**
  * Reminder sender (PR 8; ADR 0009), invoked every 5 minutes by an external
@@ -43,6 +43,12 @@ function formatLeadTime(minutes: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+// Matches "Bearer <token>" case-insensitively, trims stray whitespace either
+// side of the scheme or the token, and tolerates more than one space between
+// them — so a cron-job.org header config slip ("bearer", a doubled space)
+// fails as a wrong secret would, not as an indistinguishable missing header.
+const BEARER_RE = /^bearer\s+(.+)$/i;
+
 /**
  * GET /api/reminders/run
  *
@@ -54,10 +60,23 @@ function formatLeadTime(minutes: number): string {
  */
 export async function GET(request: Request) {
   const expected = process.env.CRON_SECRET;
-  const authHeader = request.headers.get("authorization") ?? "";
-  const provided = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
+  const authHeader = (request.headers.get("authorization") ?? "").trim();
+  const match = BEARER_RE.exec(authHeader);
+  const provided = match ? match[1].trim() : "";
   if (!expected || !provided || !tokenMatches(provided, expected)) {
     return new Response("Not found.", { status: 404 });
+  }
+
+  // Checked before anything else touches `reminder_log`: inserting an
+  // idempotency row and then silently no-op'ing the send (lib/push.ts's own
+  // "unconfigured" no-op) would mark every reminder due right now as sent
+  // FOREVER, even though nothing was delivered — the exact state of the
+  // world for however long it takes to set the VAPID/CRON_SECRET env vars
+  // after this PR merges. Returning early with nothing written means the
+  // 24h catch-up window genuinely covers that gap once the vars land,
+  // instead of every reminder due during it being silently lost.
+  if (!isPushConfigured()) {
+    return Response.json({ configured: false, due: 0, sent: 0 });
   }
 
   const db = getDb();
@@ -68,7 +87,7 @@ export async function GET(request: Request) {
   // app/api/calendar.ics's own direct reads).
   const [household] = await db.select().from(households).limit(1);
   if (!household) {
-    return Response.json({ due: 0, sent: 0 });
+    return Response.json({ configured: true, due: 0, sent: 0 });
   }
 
   const [events, exdates, members] = await Promise.all([
@@ -128,5 +147,5 @@ export async function GET(request: Request) {
     sent += 1;
   }
 
-  return Response.json({ due: due.length, sent });
+  return Response.json({ configured: true, due: due.length, sent });
 }

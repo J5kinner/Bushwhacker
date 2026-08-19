@@ -18,4 +18,4 @@ ALTER TABLE "calendar_events" ADD COLUMN "reminder_minutes" smallint;--> stateme
 ALTER TABLE "households" ADD COLUMN "timezone" text DEFAULT 'Australia/Sydney' NOT NULL;--> statement-breakpoint
 ALTER TABLE "push_subscriptions" ADD CONSTRAINT "push_subscriptions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "reminder_log" ADD CONSTRAINT "reminder_log_event_id_calendar_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "public"."calendar_events"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "calendar_events" ADD CONSTRAINT "calendar_events_reminder_minutes_range" CHECK ("calendar_events"."reminder_minutes" is null or "calendar_events"."reminder_minutes" between -1440 and 10080);
+ALTER TABLE "calendar_events" ADD CONSTRAINT "calendar_events_reminder_minutes_range" CHECK ("calendar_events"."reminder_minutes" is null or "calendar_events"."reminder_minutes" between -1440 and 1440);

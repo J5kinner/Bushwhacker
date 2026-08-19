@@ -1,5 +1,5 @@
 {
-  "id": "2a5a882f-00dc-47eb-b3be-ab304dd832ea",
+  "id": "ed2fdad2-1bb3-4e5b-8243-34df81b1e026",
   "prevId": "a44326c9-7611-4911-98b5-fcfadadcabe7",
   "version": "7",
   "dialect": "postgresql",
@@ -363,7 +363,7 @@
         },
         "calendar_events_reminder_minutes_range": {
           "name": "calendar_events_reminder_minutes_range",
-          "value": "\"calendar_events\".\"reminder_minutes\" is null or \"calendar_events\".\"reminder_minutes\" between -1440 and 10080"
+          "value": "\"calendar_events\".\"reminder_minutes\" is null or \"calendar_events\".\"reminder_minutes\" between -1440 and 1440"
         }
       },
       "isRLSEnabled": false

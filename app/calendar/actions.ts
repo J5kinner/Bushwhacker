@@ -9,8 +9,15 @@ import { CACHE_TAGS, getHouseholdMembers } from "@/lib/queries";
 import { isEventColour } from "@/lib/event-colours";
 import { sendPushToUsers } from "@/lib/push";
 
+// Clamped to what the sender can actually deliver, not just to the widest
+// preset the event sheet currently offers: dueReminders' own expansion
+// window (lib/reminder-instants.ts) only reaches from yesterday to
+// tomorrow+1 in the household's calendar, so no offset beyond about a day
+// either side of "now" can ever fire. A future preset beyond this range
+// would ship silently broken rather than merely unreachable through today's
+// UI — widen both together (this range and the window) if that ever changes.
 const MIN_REMINDER_MINUTES = -1440;
-const MAX_REMINDER_MINUTES = 10080;
+const MAX_REMINDER_MINUTES = 1440;
 
 const MAX_COMMENT_LENGTH = 1000;
 
@@ -230,12 +237,14 @@ async function normaliseEventInput(
     return { ok: false, reason: "Repeat until can't be before the start date." };
   }
 
-  // -1440..10080: minutes BEFORE the reminder anchor (db/schema.ts's own
-  // comment on `reminderMinutes`), wide enough to cover every preset the
-  // event sheet offers (from -540, the all-day "morning of", to 1440, the
-  // timed "1 day before") plus headroom — mirrored by the DB-level CHECK
-  // constraint (calendar_events_reminder_minutes_range) as a backstop for a
-  // write that ever bypasses this validation.
+  // -1440..1440: minutes BEFORE the reminder anchor (db/schema.ts's own
+  // comment on `reminderMinutes`), covering every preset the event sheet
+  // offers (from -540, the all-day "morning of", to 1440, the timed "1 day
+  // before") — capped at exactly what dueReminders' expansion window can
+  // ever deliver (see MIN/MAX_REMINDER_MINUTES above), not a wider
+  // "plausible" range. Mirrored by the DB-level CHECK constraint
+  // (calendar_events_reminder_minutes_range) as a backstop for a write that
+  // ever bypasses this validation.
   const reminderMinutes = input.reminderMinutes ?? null;
   if (
     reminderMinutes !== null &&

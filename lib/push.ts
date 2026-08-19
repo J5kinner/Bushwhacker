@@ -21,6 +21,19 @@ if (configured) {
   webpush.setVapidDetails(SUBJECT as string, PUBLIC_KEY as string, PRIVATE_KEY as string);
 }
 
+/**
+ * Whether all three VAPID env vars are set. The reminder sender
+ * (app/api/reminders/run) MUST check this before writing anything to
+ * `reminder_log` — see that route's own comment on why: inserting the
+ * idempotency row first and then silently no-op'ing the send here would mark
+ * a reminder "sent" forever the moment it's merely unconfigured, which is
+ * exactly the state of the world for the whole first hour (or however long)
+ * between merging this PR and setting the env vars in Vercel.
+ */
+export function isPushConfigured(): boolean {
+  return configured;
+}
+
 export interface PushPayload {
   title: string;
   body: string;

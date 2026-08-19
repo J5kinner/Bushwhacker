@@ -245,11 +245,14 @@ export const calendarEvents = pgTable(
     // same reasoning as the chores table's range checks above: the DB is the
     // backstop for a write that ever bypasses the Server Action.
     check("calendar_events_repeat_interval_range", sql`${t.repeatInterval} between 1 and 99`),
-    // Mirrors normaliseEventInput's own -1440..10080 clamp (app/calendar/actions.ts)
-    // — same backstop reasoning as the two checks above.
+    // Mirrors normaliseEventInput's own -1440..1440 clamp (app/calendar/actions.ts)
+    // — same backstop reasoning as the two checks above. That range is
+    // itself capped at what lib/reminder-instants.ts's dueReminders can ever
+    // deliver (its expansion window only reaches about a day either side of
+    // "now"), not a wider "plausible" range.
     check(
       "calendar_events_reminder_minutes_range",
-      sql`${t.reminderMinutes} is null or ${t.reminderMinutes} between -1440 and 10080`,
+      sql`${t.reminderMinutes} is null or ${t.reminderMinutes} between -1440 and 1440`,
     ),
   ],
 );
