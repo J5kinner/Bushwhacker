@@ -5,7 +5,6 @@ import {
   bandForDistance,
   resolveProximity,
   formatDistance,
-  STALE_AFTER_MS,
   BANDS,
 } from "./proximity.ts";
 
@@ -86,37 +85,34 @@ test("bands run monotonically from cold to hot", () => {
   assert.equal(BANDS[BANDS.length - 1].warmth, 0);
 });
 
-test("resolveProximity trusts two fresh, precise fixes", () => {
-  const now = new Date("2026-08-10T12:01:00Z");
-  const reading = resolveProximity(fix(-37.8136, 144.9631), fix(-37.8137, 144.9632), now);
+test("resolveProximity trusts two precise fixes", () => {
+  const reading = resolveProximity(fix(-37.8136, 144.9631), fix(-37.8137, 144.9632));
   assert.equal(reading.doubt, null);
   assert.equal(reading.band.key, "together");
   assert.ok(reading.distanceM < 50);
 });
 
-test("resolveProximity distrusts a stale fix", () => {
-  const stale = new Date("2026-08-10T12:00:00Z");
-  const now = new Date(stale.getTime() + STALE_AFTER_MS + 1);
+test("resolveProximity trusts a precise fix however old it is", () => {
+  // Age used to grey the meter out. It no longer does: a day-old pair of
+  // precise fixes still resolves a believable band, captioned with its age.
+  const old = new Date("2026-08-09T12:00:00Z");
   const reading = resolveProximity(
-    fix(-37.8136, 144.9631, 10, stale),
-    fix(-37.8137, 144.9632, 10, now),
-    now,
+    fix(-37.8136, 144.9631, 10, old),
+    fix(-37.8137, 144.9632, 10, old),
   );
-  assert.equal(reading.doubt, "stale");
-  // The band is still resolved — the meter greys it out rather than hiding it.
+  assert.equal(reading.doubt, null);
   assert.equal(reading.band.key, "together");
 });
 
 test("resolveProximity reports the older fix as the measurement time", () => {
   const older = new Date("2026-08-10T11:58:00Z");
   const newer = new Date("2026-08-10T12:00:00Z");
-  const now = new Date("2026-08-10T12:00:30Z");
   assert.equal(
-    resolveProximity(fix(0, 0, 10, newer), fix(0, 0, 10, older), now).measuredAt.getTime(),
+    resolveProximity(fix(0, 0, 10, newer), fix(0, 0, 10, older)).measuredAt.getTime(),
     older.getTime(),
   );
   assert.equal(
-    resolveProximity(fix(0, 0, 10, older), fix(0, 0, 10, newer), now).measuredAt.getTime(),
+    resolveProximity(fix(0, 0, 10, older), fix(0, 0, 10, newer)).measuredAt.getTime(),
     older.getTime(),
   );
 });
@@ -126,59 +122,40 @@ test("resolveProximity trusts 'together' at ordinary GPS accuracy", () => {
   // wrong: two people standing next to each other measure a few metres apart,
   // which any accuracy figure exceeds. Weighed against the band's own 50 m
   // scale, a pair of 10 m fixes is plenty.
-  const now = new Date("2026-08-10T12:00:30Z");
   const reading = resolveProximity(
     fix(-37.8136, 144.9631, 10),
     fix(-37.81361, 144.96311, 10),
-    now,
   );
   assert.equal(reading.band.key, "together");
   assert.equal(reading.doubt, null);
 });
 
 test("resolveProximity distrusts an error wider than the whole band", () => {
-  const now = new Date("2026-08-10T12:00:30Z");
   // Two wifi-grade fixes ~300 m apart, each accurate to 2 km. That lands in
   // "warmer", whose entire span is 1 km — the 4 km combined error swallows it.
   const reading = resolveProximity(
     fix(-37.8136, 144.9631, 2_000),
     fix(-37.8163, 144.9631, 2_000),
-    now,
   );
   assert.equal(reading.band.key, "warmer");
   assert.equal(reading.doubt, "imprecise");
 });
 
 test("resolveProximity trusts a wide gap despite loose accuracy", () => {
-  const now = new Date("2026-08-10T12:00:30Z");
   // The same loose fixes ~50 km apart. That is the "cold" band, spanning to
   // 100 km, so a 3 km combined error changes nothing.
   const reading = resolveProximity(
     fix(-37.8136, 144.9631, 1_500),
     fix(-37.3636, 144.9631, 1_500),
-    now,
   );
   assert.equal(reading.band.key, "cold");
   assert.equal(reading.doubt, null);
 });
 
-test("resolveProximity reports staleness ahead of imprecision", () => {
-  const stale = new Date("2026-08-10T12:00:00Z");
-  const now = new Date(stale.getTime() + STALE_AFTER_MS + 1);
-  const reading = resolveProximity(
-    fix(-37.8136, 144.9631, 5_000, stale),
-    fix(-37.8137, 144.9632, 5_000, now),
-    now,
-  );
-  assert.equal(reading.doubt, "stale");
-});
-
 test("resolveProximity treats a missing accuracy as no reported error", () => {
-  const now = new Date("2026-08-10T12:00:30Z");
   const reading = resolveProximity(
     fix(-37.8136, 144.9631, null),
     fix(-37.8226, 144.9631, null),
-    now,
   );
   assert.equal(reading.doubt, null);
 });

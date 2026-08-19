@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { MapPin, BatteryLow, Crosshair } from "lucide-react";
+import { MapPin, Crosshair } from "lucide-react";
 import type { MemberLocation } from "@/lib/queries";
 import { setLocationSharing, recordMyLocation } from "./actions";
 import { LocationMap } from "./location-map";
@@ -18,6 +18,49 @@ function relativeAge(capturedAt: Date): string {
   if (hours < 24) return `${hours} hours ago`;
   const days = Math.floor(hours / 24);
   return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/**
+ * A battery at a glance: shell, terminal cap, and a fill proportional to the
+ * charge.
+ *
+ * Drawn rather than borrowed from Lucide, whose Battery* icons only step in
+ * thirds — they cannot honestly picture 64%. Amber below a fifth, matching the
+ * old low-battery pill: the fill alone is easy to miss on a phone in daylight.
+ */
+function BatteryGauge({ pct }: { pct: number }) {
+  // The shell's interior runs x=1.5 to 15.5. A floor keeps a nearly-flat
+  // battery visible as a sliver rather than nothing at all.
+  const fill = Math.max(0.5, (Math.min(100, Math.max(0, pct)) / 100) * 14);
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 ${
+        pct <= 20 ? "text-amber-600 dark:text-amber-400" : ""
+      }`}
+    >
+      <svg viewBox="0 0 20 12" className="h-3 w-5 shrink-0" aria-hidden>
+        <rect
+          x="0.5"
+          y="0.5"
+          width="16"
+          height="11"
+          rx="2.5"
+          fill="none"
+          stroke="currentColor"
+        />
+        <path
+          d="M18 4.5v3"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <rect x="1.5" y="1.5" width={fill} height="9" rx="1.5" fill="currentColor" />
+      </svg>
+      <span className="sr-only">Battery </span>
+      {pct}%
+    </span>
+  );
 }
 
 /** One member's row: name, freshness, and how precise the fix was. */
@@ -59,12 +102,7 @@ function MemberRow({ member }: { member: MemberLocation }) {
             ±{member.accuracyM} m
           </span>
         )}
-        {member.batteryPct !== null && member.batteryPct <= 20 && (
-          <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
-            <BatteryLow className="size-3.5" aria-hidden />
-            {member.batteryPct}%
-          </span>
-        )}
+        {member.batteryPct !== null && <BatteryGauge pct={member.batteryPct} />}
       </div>
     </li>
   );
