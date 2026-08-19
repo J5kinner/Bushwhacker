@@ -3,7 +3,7 @@
 import { useMemo, useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, Plus } from "lucide-react";
-import type { Activity, CalendarEvent, EventComment } from "@/db/schema";
+import type { Activity, CalendarEvent, EventAttachment, EventComment } from "@/db/schema";
 import { Switch } from "@/components/ui/switch";
 import { EVENT_COLOURS } from "@/lib/event-colours";
 import type { HouseholdMember } from "@/lib/queries";
@@ -156,6 +156,7 @@ export function CalendarEvents({
   anchorMonth,
   members,
   comments,
+  attachments,
   activity,
   unseenCount,
   currentUserId,
@@ -168,6 +169,8 @@ export function CalendarEvents({
   members: HouseholdMember[];
   /** Every comment on this household's events, oldest first — filtered down to one event's slice before it reaches EventSheet. */
   comments: EventComment[];
+  /** Every attachment on this household's events, oldest first — filtered down to one event's slice before it reaches EventSheet, same as comments above. */
+  attachments: EventAttachment[];
   /** The household's latest activity rows, newest first (getActivity, lib/queries.ts). */
   activity: Activity[];
   /** Computed server-side (page.tsx) from the cached activity rows plus the current user's uncached activity_seen_at. */
@@ -691,6 +694,7 @@ export function CalendarEvents({
           occurrence={editingOccurrence}
           members={members}
           comments={comments.filter((c) => c.eventId === editingOccurrence.event.id)}
+          attachments={attachments.filter((a) => a.eventId === editingOccurrence.event.id)}
           currentUserId={currentUserId}
           error={error}
           onClose={closeEventSheet}

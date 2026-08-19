@@ -5,6 +5,7 @@ import {
   text,
   boolean,
   smallint,
+  integer,
   date,
   time,
   timestamp,
@@ -386,6 +387,43 @@ export const reminderLog = pgTable(
 );
 
 /**
+ * A file or photo attached to a calendar event (PR 9; ADR 0010) — TimeTree
+ * premium's attachments feature. The blob itself lives in Vercel Blob, not
+ * this table; this row is metadata pointing at it. `url` is the public,
+ * permanent fetch URL handed straight to an `<a>`/`<img>`; `pathname` is the
+ * store's own key, needed only to `del()` the blob later (deleteAttachment,
+ * deleteCalendarEvent — app/calendar/actions.ts), since Vercel Blob's delete
+ * API takes the pathname/URL, not this row's id. Cascades with its event —
+ * an attachment has no meaning once the event it's attached to is gone,
+ * same reasoning as `event_comments` above; the FK cascade only removes the
+ * *row*, so the actions that delete an event also best-effort `del()` the
+ * underlying blob so it doesn't orphan in the store forever.
+ */
+export const eventAttachments = pgTable("event_attachments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  eventId: uuid("event_id")
+    .notNull()
+    .references(() => calendarEvents.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  /**
+   * The Blob store's own key for this object. Unique because the upload
+   * route's `addRandomSuffix: true` makes it unique per upload attempt
+   * regardless of filename collisions — which is exactly what makes it the
+   * idempotency key for `onUploadCompleted`'s insert
+   * (app/api/attachments/upload/route.ts): Vercel retries that webhook (up
+   * to 5 times) on anything but a 200 response, and this column's own
+   * uniqueness is what lets `onConflictDoNothing` recognise a retry of an
+   * already-processed callback instead of inserting a duplicate row.
+   */
+  pathname: text("pathname").notNull().unique(),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  size: integer("size").notNull(),
+  uploadedById: uuid("uploaded_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+/**
  * Recurring household chores, each carrying a Chore Cognitive Load Index.
  * Raw CLI inputs are stored (not just the derived score/band) so the weights in
  * lib/chore-load.ts can be re-tuned without re-surveying the household.
@@ -471,6 +509,7 @@ export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type EventExdate = typeof eventExdates.$inferSelect;
 export type EventComment = typeof eventComments.$inferSelect;
+export type EventAttachment = typeof eventAttachments.$inferSelect;
 export type Activity = typeof activity.$inferSelect;
 // Named "Row", not "PushSubscription" — the DOM lib already owns that name
 // for the browser's own Web Push API type, and this file is imported from

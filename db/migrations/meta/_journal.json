@@ -71,6 +71,13 @@
       "when": 1787139456907,
       "tag": "0009_curly_warbound",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787142593662,
+      "tag": "0010_jazzy_taskmaster",
+      "breakpoints": true
     }
   ]
 }
