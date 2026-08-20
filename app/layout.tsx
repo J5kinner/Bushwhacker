@@ -7,6 +7,7 @@ import { BottomNav } from "@/components/bottom-nav";
 import { LiveRefresh } from "@/components/live-refresh";
 import { PushResubscribe } from "@/components/push-resubscribe";
 import { SwRegister } from "@/components/sw-register";
+import { WebVitalsReporter } from "@/components/web-vitals-reporter";
 import { auth } from "@/auth";
 import { getCurrentUserDarkMode } from "@/lib/queries";
 
@@ -70,6 +71,7 @@ export default async function RootLayout({
         */}
         <SpeedInsights />
         <Analytics />
+        <WebVitalsReporter />
       </body>
     </html>
   );

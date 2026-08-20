@@ -166,5 +166,5 @@ Neither is a trend line, and Speed Insights data cannot be exported on Hobby at 
 Pro-and-above, and there is no public read API.
 
 That gap is closed separately by self-collected Web Vitals stored in our own Neon database
-(ADR 0008), which is not subject to anyone's retention window.
+(ADR 0011), which is not subject to anyone's retention window.
 Vercel's dashboards remain the convenient view; our table is the durable record.
