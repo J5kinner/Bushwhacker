@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Switch } from "@/components/ui/switch";
+import { themeFor, writeThemeCookieFromBrowser } from "@/lib/theme";
 import { setDarkMode } from "./actions";
 
 /**
@@ -17,6 +18,16 @@ export function ThemeToggle({ initialDarkMode }: { initialDarkMode: boolean }) {
   const [enabled, setEnabled] = useState(initialDarkMode);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  // Reconcile this device with the saved preference. The root layout paints
+  // from a cookie, and a device that has never toggled here does not have one
+  // yet — so a member who turned dark mode on elsewhere would keep landing on
+  // a light app. This page is the one place that knows the stored value, so it
+  // is where the cookie gets seeded.
+  useEffect(() => {
+    writeThemeCookieFromBrowser(themeFor(initialDarkMode));
+    applyDarkClass(initialDarkMode);
+  }, [initialDarkMode]);
 
   function toggle(next: boolean) {
     setError(null);
