@@ -19,6 +19,24 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
 
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      # The suite is .mts and the tests carry type annotations, so this needs a
+      # Node that strips types without a flag — 22.18 or newer. `22` resolves to
+      # the latest 22.x, which is well past that; pinning this line to an older
+      # 22.x would fail the suite with a syntax error rather than a version
+      # complaint, which is a confusing way to find out.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
   migrations:
     name: Migrations in sync
     runs-on: ubuntu-latest
