@@ -30,8 +30,6 @@ import { CACHE_TAGS } from "@/lib/queries";
  * below needs the same Node fetch/crypto plumbing `web-push` needs
  * elsewhere in this codebase.
  */
-export const dynamic = "force-dynamic";
-
 const ALLOWED_CONTENT_TYPES = [
   "image/jpeg",
   "image/png",

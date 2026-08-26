@@ -3,8 +3,6 @@ import { getSetupIssue } from "@/lib/household";
 import { SetupNotice } from "@/components/db-notice";
 import { RecipesList } from "./recipes-list";
 
-export const dynamic = "force-dynamic";
-
 export default async function RecipesPage() {
   const [recipes, setupIssue] = await Promise.all([
     getRecipes(),

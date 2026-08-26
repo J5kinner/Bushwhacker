@@ -3,8 +3,6 @@ import { getSetupIssue } from "@/lib/household";
 import { SetupNotice } from "@/components/db-notice";
 import { ChoresList } from "./chores-list";
 
-export const dynamic = "force-dynamic";
-
 export default async function ChoresPage() {
   const [chores, setupIssue] = await Promise.all([getChores(), getSetupIssue()]);
 

@@ -11,8 +11,6 @@ import { resolveCalendarWindow } from "@/lib/calendar-window";
 import { SetupNotice } from "@/components/db-notice";
 import { CalendarEvents } from "./calendar-events";
 
-export const dynamic = "force-dynamic";
-
 export default async function CalendarPage({
   searchParams,
 }: {

@@ -2,8 +2,6 @@ import { getDb, isDbConfigured } from "@/db";
 import { webVitals } from "@/db/schema";
 import { parseVitalReport } from "@/lib/web-vitals";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Web Vitals ingest for components/web-vitals-reporter.tsx.
  *
