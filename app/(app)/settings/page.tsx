@@ -13,8 +13,6 @@ import { LocationSetup } from "./location-setup";
 import { NotificationsSettings } from "./notifications";
 import { ThemeToggle } from "./theme-toggle";
 
-export const dynamic = "force-dynamic";
-
 export default async function SettingsPage() {
   const [session, categories, setupIssue, userId, headerList] = await Promise.all([
     auth(),

@@ -18,8 +18,6 @@ import { isPushConfigured, sendPushToUsers } from "@/lib/push";
  * the runtime unset (as below) defaults to Node, which is exactly what this
  * needs.
  */
-export const dynamic = "force-dynamic";
-
 /**
  * SHA-256 digest of a string. Hashing both sides before comparing means a
  * length mismatch between the raw provided/expected secrets can never

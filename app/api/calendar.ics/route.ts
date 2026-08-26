@@ -14,8 +14,6 @@ import { measure, serverTimingHeader, type Timing } from "@/lib/timing";
  * ever reaches this route — the `?token=` query param below IS this route's
  * whole authentication, not a supplement to one.
  */
-export const dynamic = "force-dynamic";
-
 /**
  * SHA-256 digest of a string. Hashing both sides before comparing means a
  * length mismatch between the raw provided/expected tokens can never

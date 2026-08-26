@@ -3,8 +3,6 @@ import { getSetupIssue } from "@/lib/household";
 import { SetupNotice } from "@/components/db-notice";
 import { ShoppingList } from "./shopping-list";
 
-export const dynamic = "force-dynamic";
-
 export default async function ShoppingPage() {
   const [items, categories, setupIssue] = await Promise.all([
     getShoppingItems(),

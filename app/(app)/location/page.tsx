@@ -3,8 +3,6 @@ import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { SetupNotice } from "@/components/db-notice";
 import { LocationView } from "./location-view";
 
-export const dynamic = "force-dynamic";
-
 export default async function LocationPage() {
   const [members, setupIssue, currentUserId] = await Promise.all([
     getMemberLocations(),
