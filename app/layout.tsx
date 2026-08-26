@@ -8,7 +8,19 @@ import { WebVitalsReporter } from "@/components/web-vitals-reporter";
 import { THEME_COOKIE } from "@/lib/theme";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+/*
+  `preload: false` because exactly one element in the app is monospaced — the
+  location token and endpoint in Settings. Preloading put a 23KB face in the
+  HTTP Link header of every page, competing with genuinely critical resources
+  at first paint on five tabs that never render a monospace glyph. Without the
+  preload the @font-face rule still ships, and the browser fetches the file
+  only on a page that actually applies it.
+*/
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+  preload: false,
+});
 
 export const metadata: Metadata = {
   title: "HomeSync",
