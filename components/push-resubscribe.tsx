@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { savePushSubscription } from "@/app/settings/actions";
+import { savePushSubscription } from "@/app/(app)/settings/actions";
 
 /**
  * Converts the VAPID public key's URL-safe base64 into the raw byte array

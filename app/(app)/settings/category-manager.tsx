@@ -5,7 +5,7 @@ import { Plus, Trash2 } from "lucide-react";
 import {
   addShoppingCategory,
   removeShoppingCategory,
-} from "@/app/shopping/actions";
+} from "../shopping/actions";
 
 type Category = { id: string; name: string };
 

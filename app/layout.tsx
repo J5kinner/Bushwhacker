@@ -3,13 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
-import { BottomNav } from "@/components/bottom-nav";
-import { LiveRefresh } from "@/components/live-refresh";
-import { PushResubscribe } from "@/components/push-resubscribe";
 import { SwRegister } from "@/components/sw-register";
 import { WebVitalsReporter } from "@/components/web-vitals-reporter";
-import { auth } from "@/auth";
-import { getCurrentUserDarkMode } from "@/lib/queries";
+import { THEME_COOKIE } from "@/lib/theme";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -30,42 +26,47 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default async function RootLayout({
+/**
+ * Applies the saved theme before the browser paints.
+ *
+ * Runs synchronously in <head>, ahead of any markup, so the first frame is
+ * already the right colour — the flash this avoids is why it is a blocking
+ * inline script rather than an effect. It reads the cookie rather than asking
+ * the server because the alternative is a per-request read in this layout, and
+ * anything awaited here makes every route in the app dynamic.
+ *
+ * Wrapped in try/catch because a browser with cookies disabled throws on
+ * `document.cookie`, and a theme preference is not worth a blank page.
+ */
+const applyTheme = `try{if(document.cookie.indexOf("${THEME_COOKIE}=dark")>-1)document.documentElement.classList.add("dark")}catch(e){}`;
+
+/**
+ * The document shell, and nothing else.
+ *
+ * Deliberately synchronous and free of any request-time read. This layout wraps
+ * every route, so anything awaited here — a session, cookies, a theme lookup —
+ * blocks all of them from being prerendered, and no amount of page-level work
+ * can recover a static shell once the layout above it is dynamic. The nav
+ * chrome that used to live here behind a session check now lives in the `(app)`
+ * route group's layout, with the sign-in page sitting outside that group.
+ */
+export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const session = await auth();
-  const darkMode = await getCurrentUserDarkMode(session);
-
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased${darkMode ? " dark" : ""}`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: applyTheme }} />
+      </head>
       <body className="bg-background text-foreground">
-        {session ? (
-          // Authenticated: full app shell with the bottom tab bar.
-          <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
-            {/*
-              The bottom padding reserves exactly the band the fixed nav covers —
-              its 4rem height plus the home-indicator inset underneath it — so
-              page content can always scroll clear of the nav. A flat value would
-              come up short by the inset on an iPhone.
-            */}
-            <main className="flex-1 px-4 pb-[calc(4rem+env(safe-area-inset-bottom))] pt-6">
-              {children}
-            </main>
-            <BottomNav />
-            <LiveRefresh />
-            <PushResubscribe />
-          </div>
-        ) : (
-          // Unauthenticated (e.g. the sign-in page): no nav chrome.
-          <div className="mx-auto min-h-dvh w-full max-w-md">{children}</div>
-        )}
+        {children}
         <SwRegister />
         {/*
-          Both outside the session branch so the sign-in page is measured too.
-          Page views only: on Hobby, custom events are a Pro feature and
+          All three outside any session branch so the sign-in page is measured
+          too. Page views only: on Hobby, custom events are a Pro feature and
           track() silently discards, so this app makes no track() calls at all.
           See ADR 0005.
         */}

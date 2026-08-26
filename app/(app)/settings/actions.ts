@@ -2,16 +2,22 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { getDb } from "@/db";
 import { pushSubscriptions, users } from "@/db/schema";
 import { getCurrentUserId } from "@/lib/household";
+import { THEME_COOKIE, THEME_COOKIE_MAX_AGE, themeFor } from "@/lib/theme";
 
 /**
  * Turn dark mode on or off for the signed-in member. Returns whether it was
  * saved, so the toggle can revert itself if the member has no household row.
  *
- * Revalidates the root layout (not just /settings) because the `.dark` class
- * lives on the <html> element that layout renders, not on the settings page.
+ * Writes the preference twice on purpose. The `users` row is the source of
+ * truth and follows the member to any device; the cookie is this device's
+ * mirror of it, and is what the root layout's inline script reads to get the
+ * first frame's colour right. The layout cannot read the row itself — awaiting
+ * anything there makes every route in the app dynamic, which is exactly what
+ * moving the shell into the `(app)` group was for.
  */
 export async function setDarkMode(enabled: boolean): Promise<boolean> {
   const userId = await getCurrentUserId();
@@ -22,8 +28,28 @@ export async function setDarkMode(enabled: boolean): Promise<boolean> {
     .set({ darkMode: enabled })
     .where(eq(users.id, userId));
 
-  revalidatePath("/", "layout");
+  await writeThemeCookie(enabled);
+  // /settings renders the toggle's initial state from the row, so it still
+  // needs busting; the root layout no longer reads the preference at all.
+  revalidatePath("/settings");
   return true;
+}
+
+/**
+ * Mirrors the saved preference into this device's cookie.
+ *
+ * Not httpOnly: the root layout's inline script reads it from `document.cookie`
+ * before first paint, which is the only reason it exists.
+ */
+async function writeThemeCookie(enabled: boolean): Promise<void> {
+  const jar = await cookies();
+  jar.set(THEME_COOKIE, themeFor(enabled), {
+    maxAge: THEME_COOKIE_MAX_AGE,
+    path: "/",
+    sameSite: "lax",
+    httpOnly: false,
+    secure: process.env.NODE_ENV === "production",
+  });
 }
 
 /**

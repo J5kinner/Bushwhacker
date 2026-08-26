@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Check, Copy, KeyRound } from "lucide-react";
-import { regenerateLocationToken } from "@/app/location/actions";
+import { regenerateLocationToken } from "../location/actions";
 
 /** A label, a value, and a copy button — one OwnTracks field to transcribe. */
 function CopyRow({ label, value }: { label: string; value: string }) {
