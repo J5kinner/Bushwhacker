@@ -1,8 +1,28 @@
-// Minimal HomeSync service worker: network-first with a cache fallback so the
-// installed PWA keeps working briefly offline. Intentionally simple — a fuller
-// caching strategy is a later enhancement.
-const CACHE = "homesync-v2";
-const SHELL = ["/shopping", "/location", "/calendar", "/settings"];
+// HomeSync service worker.
+//
+// Two strategies, because two kinds of request want opposite things:
+//
+// - Build output under /_next/static/ is content-hashed, so its URL changes
+//   whenever its bytes do. A cache hit can therefore never be stale, and going
+//   to the network to confirm that is pure latency. Served cache-first.
+// - Everything else is household data, where being current matters more than
+//   being instant. Served network-first, falling back to the cache only when
+//   the network fails.
+const CACHE = "homesync-v3";
+
+// Precached so an offline launch has documents to fall back to. All six tabs,
+// not the four this list drifted to.
+const SHELL = [
+  "/shopping",
+  "/recipes",
+  "/calendar",
+  "/location",
+  "/settings",
+  "/chores",
+];
+
+// The last-resort document for an offline navigation to a page never visited.
+const OFFLINE_FALLBACK = "/shopping";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -25,33 +45,70 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+/** Store a response, best-effort. Never cache an error: a cached 500 outlives the outage that caused it. */
+function remember(request, response) {
+  if (!response.ok) return;
+  const copy = response.clone();
+  caches
+    .open(CACHE)
+    .then((cache) => cache.put(request, copy))
+    .catch(() => {});
+}
+
+/** Immutable assets: the cache is authoritative, the network is the cold path. */
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  remember(request, response);
+  return response;
+}
+
+/**
+ * Everything else: current if possible, cached if not.
+ *
+ * The HTML fallback is offered ONLY to navigations. It used to be offered to
+ * any unmatched request, which meant a failed script or RSC fetch was answered
+ * with the /shopping document — markup where the caller expected JavaScript or
+ * a flight payload, which fails more confusingly than the network error it
+ * replaced. A non-navigation miss now rejects, exactly as it would with no
+ * service worker installed at all.
+ */
+async function networkFirst(request, isNavigation) {
+  try {
+    const response = await fetch(request);
+    remember(request, response);
+    return response;
+  } catch (error) {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    if (isNavigation) {
+      const fallback = await caches.match(OFFLINE_FALLBACK);
+      if (fallback) return fallback;
+    }
+    throw error;
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
 
-  // Leave Vercel's telemetry alone. The Speed Insights vitals beacon is a POST
-  // and already skips the check above, but its loader script is a same-origin
-  // GET (/_vercel/speed-insights/script.js), so without this it would be stored
-  // in the offline cache. Two reasons not to: telemetry has no business in a
-  // household device's cache, and the offline fallback below answers an
-  // unmatched request with the /shopping HTML document, which as a reply to a
-  // script request is a console parse error for no benefit.
-  // Matched by prefix, so it also covers any future /_vercel/* telemetry route.
-  if (new URL(request.url).pathname.startsWith("/_vercel/")) return;
+  const url = new URL(request.url);
+  // Cross-origin (map tiles, Google's sign-in) is somebody else's cache to manage.
+  if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
-        return response;
-      })
-      .catch(() =>
-        caches
-          .match(request)
-          .then((cached) => cached || caches.match("/shopping")),
-      ),
-  );
+  // Telemetry has no business in a household device's offline cache. The
+  // Speed Insights beacon is a POST and already skipped above; this covers its
+  // loader script, a same-origin GET, and any future /_vercel/* route.
+  if (url.pathname.startsWith("/_vercel/")) return;
+
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
+
+  event.respondWith(networkFirst(request, request.mode === "navigate"));
 });
 
 // Push notifications (PR 8, calendar reminders + partner-activity pushes;
