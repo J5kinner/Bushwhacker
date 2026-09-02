@@ -541,6 +541,144 @@ export const webVitals = pgTable(
   ],
 );
 
+/**
+ * A bank account whose monthly statement CSV is imported into the Almanac's
+ * Finances section. `kind` is closed to the three accounts this household
+ * actually has (ADR 0012) — open it up if that ever changes.
+ */
+export const financeAccounts = pgTable(
+  "finance_accounts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    name: text("name").notNull(),
+    kind: text("kind", {
+      enum: ["home_loan", "savings", "credit_card"],
+    }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("finance_accounts_household_name").on(t.householdId, t.name)],
+);
+
+/**
+ * One CSV upload. `sha256` skips re-processing the exact same file a second
+ * time; `dedupeHash` on individual transactions (below) handles the more
+ * common case of two different exports whose statement periods overlap.
+ */
+export const financeImports = pgTable(
+  "finance_imports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    // Denormalised from accountId, matching calendarEvents/chores rather than
+    // eventComments/eventExdates: the finance views' main query is "this
+    // household's rows this month" and shouldn't need a join through accounts
+    // to get there.
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => financeAccounts.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    sha256: text("sha256").notNull(),
+    rowCount: smallint("row_count").notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    importedAt: timestamp("imported_at").defaultNow().notNull(),
+  },
+  (t) => [unique("finance_imports_account_sha256").on(t.accountId, t.sha256)],
+);
+
+/**
+ * One ledger row per statement line. `amountCents` is signed (a credit is
+ * positive, a debit negative) so a plain SUM gives net cashflow with no CASE
+ * expression at query time. `balanceCents` is the bank's own running balance,
+ * stored as read rather than recomputed — and, since these CSVs carry no bank
+ * transaction id, it doubles as the tie-breaker inside `dedupeHash` for two
+ * genuinely separate transactions that happen to share a date, amount and
+ * description (e.g. two identical purchases on the same day): they leave the
+ * balance at two different values, whereas re-importing the same line leaves
+ * it unchanged. `category`/`subcategory` are the bank's own, taken verbatim —
+ * the statement already categorises every row, so there is no separate rules
+ * table or model-categorisation step (ADR 0012).
+ */
+export const financeTransactions = pgTable(
+  "finance_transactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => financeAccounts.id, { onDelete: "cascade" }),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => financeImports.id, { onDelete: "cascade" }),
+    postedDate: date("posted_date").notNull(),
+    descriptionRaw: text("description_raw").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    balanceCents: integer("balance_cents").notNull(),
+    category: text("category"),
+    subcategory: text("subcategory"),
+    dedupeHash: text("dedupe_hash").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    unique("finance_transactions_account_dedupe").on(t.accountId, t.dedupeHash),
+    index("finance_transactions_account_date_idx").on(t.accountId, t.postedDate),
+  ],
+);
+
+/**
+ * One local-model narrative per household per month (ADR 0012): written by
+ * scripts/finance-narrate.mjs running on the household's own machine against
+ * LM Studio, never by the deployed app — Vercel cannot reach a model running
+ * on a home PC. `metricsJson` is the exact computed rollup the model was
+ * shown, so a summary stays auditable against its own input even as the
+ * ledger keeps changing underneath it. `promptVersion` is stored alongside so
+ * a later prompt change reads as a prompt change, not a shift in spending.
+ * Multiple rows per period are allowed — e.g. re-running a month against a
+ * newer model or prompt.
+ */
+export const financeAnalyses = pgTable(
+  "finance_analyses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id),
+    // "YYYY-MM" — this names a whole month, not a calendar day.
+    period: text("period").notNull(),
+    modelName: text("model_name").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    summaryMd: text("summary_md").notNull(),
+    metricsJson: jsonb("metrics_json").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("finance_analyses_household_period_idx").on(t.householdId, t.period)],
+);
+
+/**
+ * A savings/spending target. `categoryFilter` matches a bank `category`
+ * verbatim when set; null means the goal tracks the whole ledger (e.g. a
+ * home-loan payoff goal that isn't about any one category).
+ */
+export const financeGoals = pgTable("finance_goals", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  householdId: uuid("household_id")
+    .notNull()
+    .references(() => households.id),
+  name: text("name").notNull(),
+  targetCents: integer("target_cents").notNull(),
+  targetDate: date("target_date"),
+  categoryFilter: text("category_filter"),
+  archivedAt: timestamp("archived_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export type ShoppingItem = typeof shoppingItems.$inferSelect;
 export type Recipe = typeof recipes.$inferSelect;
 export type ShoppingCategory = typeof shoppingCategories.$inferSelect;
@@ -557,3 +695,8 @@ export type Chore = typeof chores.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type UserLocation = typeof userLocations.$inferSelect;
 export type WebVital = typeof webVitals.$inferSelect;
+export type FinanceAccount = typeof financeAccounts.$inferSelect;
+export type FinanceImport = typeof financeImports.$inferSelect;
+export type FinanceTransaction = typeof financeTransactions.$inferSelect;
+export type FinanceAnalysis = typeof financeAnalyses.$inferSelect;
+export type FinanceGoal = typeof financeGoals.$inferSelect;
