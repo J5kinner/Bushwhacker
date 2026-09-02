@@ -15,9 +15,10 @@ import type { getFinanceImports } from "@/lib/queries";
 type FinanceImportRow = Awaited<ReturnType<typeof getFinanceImports>>[number];
 
 /**
- * The Finances part of the Almanac page, appended below the calendar so the
- * whole page stays a single scroll rather than a second tab (see ADR 0012
- * for why this feature has no page of its own).
+ * The CSV upload form and recent-imports history — one subsection of the
+ * Almanac page's Finances section (see page.tsx, which wraps this alongside
+ * FinanceOverview/FinanceGoals/FinanceAnalyses under a single "Finances"
+ * heading; ADR 0012 covers why this feature has no page of its own).
  */
 export function FinanceSection({
   initialImports,
@@ -53,9 +54,10 @@ export function FinanceSection({
   }
 
   return (
-    <section className="mt-10 border-t border-black/10 pt-6 dark:border-white/10">
-      <h2 className="mb-4 text-xl font-semibold tracking-tight">Finances</h2>
-
+    <div>
+      <h3 className="mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+        Import a statement
+      </h3>
       <form onSubmit={onImport} className="space-y-2">
         <select
           value={kind}
@@ -115,6 +117,6 @@ export function FinanceSection({
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }

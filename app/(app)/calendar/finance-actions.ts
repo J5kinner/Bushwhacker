@@ -4,7 +4,12 @@ import { and, eq } from "drizzle-orm";
 import { updateTag } from "next/cache";
 import { createHash } from "node:crypto";
 import { getDb } from "@/db";
-import { financeAccounts, financeImports, financeTransactions } from "@/db/schema";
+import {
+  financeAccounts,
+  financeImports,
+  financeTransactions,
+  financeGoals,
+} from "@/db/schema";
 import { getHouseholdId } from "@/lib/household";
 import { CACHE_TAGS } from "@/lib/queries";
 import {
@@ -134,4 +139,58 @@ export async function importFinanceCsv(
     skipped: parsed.rows.length - inserted.length,
     rowCount: parsed.rows.length,
   };
+}
+
+/**
+ * Add a monthly spending-cap goal for one bank category — the only goal
+ * shape this UI creates for now. `finance_goals.categoryFilter` stays
+ * nullable in the schema for a future whole-ledger goal type (e.g. a
+ * home-loan payoff target), but that needs its own progress computation (an
+ * account balance trend, not a category spend sum) and isn't built yet.
+ */
+export async function addFinanceGoal(input: {
+  name: string;
+  category: string;
+  targetCents: number;
+}): Promise<{ error: string } | { id: string }> {
+  const householdId = await getHouseholdId();
+  if (!householdId) {
+    return {
+      error:
+        "This deployment has no household set up yet, so nothing can be saved.",
+    };
+  }
+
+  const name = input.name.trim();
+  const category = input.category.trim();
+  if (!name || !category) {
+    return { error: "A goal needs a name and a category." };
+  }
+  if (!Number.isInteger(input.targetCents) || input.targetCents <= 0) {
+    return { error: "Enter a monthly cap greater than $0." };
+  }
+
+  const [goal] = await getDb()
+    .insert(financeGoals)
+    .values({
+      householdId,
+      name,
+      categoryFilter: category,
+      targetCents: input.targetCents,
+    })
+    .returning({ id: financeGoals.id });
+
+  updateTag(CACHE_TAGS.financeGoals);
+  return { id: goal.id };
+}
+
+/** Retire a goal. Archived rather than deleted, so past progress stays reviewable. */
+export async function archiveFinanceGoal(id: string) {
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
+  await getDb()
+    .update(financeGoals)
+    .set({ archivedAt: new Date() })
+    .where(and(eq(financeGoals.id, id), eq(financeGoals.householdId, householdId)));
+  updateTag(CACHE_TAGS.financeGoals);
 }
