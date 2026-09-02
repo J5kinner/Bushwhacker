@@ -32,9 +32,18 @@ export function FinanceSection({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  function onImport(e: React.FormEvent) {
-    e.preventDefault();
-    const file = fileInputRef.current?.files?.[0];
+  // The native <input type="file"> is visually hidden (see the sr-only input
+  // below) — "Import statement" opens it via .click(), so there is exactly
+  // one obvious, full-width tap target instead of a small native file input
+  // sitting above a button that used to look tappable but wasn't (it was a
+  // form submit with nothing to submit until a file had already been chosen
+  // through that easy-to-miss control — the reported "nothing happens on
+  // Android/iOS" bug).
+  function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    // Cleared unconditionally so choosing the same filename again still
+    // fires a fresh change event next time.
+    e.target.value = "";
     if (!file || importing) return;
     setError(null);
     setNotice(null);
@@ -48,7 +57,6 @@ export function FinanceSection({
       setNotice(
         `Imported "${file.name}" — ${result.rowCount} rows, ${result.imported} new, ${result.skipped} already on the ledger.`,
       );
-      if (fileInputRef.current) fileInputRef.current.value = "";
       router.refresh();
     });
   }
@@ -58,7 +66,7 @@ export function FinanceSection({
       <h3 className="mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
         Import a statement
       </h3>
-      <form onSubmit={onImport} className="space-y-2">
+      <div className="space-y-2">
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value as FinanceAccountKind)}
@@ -71,15 +79,25 @@ export function FinanceSection({
             </option>
           ))}
         </select>
+        {/*
+          Extension-only accept, deliberately no MIME type: Android's file
+          picker filters by the file's reported MIME type when one is given,
+          and a CSV exported from a banking app is inconsistently tagged
+          (text/csv, text/comma-separated-values, application/vnd.ms-excel,
+          or nothing at all depending on the app) — matching on ".csv" alone
+          is what actually works across Android/iOS/desktop.
+        */}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv"
           aria-label="Statement CSV"
-          className="w-full text-sm"
+          onChange={onFileChosen}
+          className="sr-only"
         />
         <button
-          type="submit"
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
           disabled={importing}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2 text-background disabled:opacity-60"
         >
@@ -90,7 +108,7 @@ export function FinanceSection({
           )}
           {importing ? "Importing…" : "Import statement"}
         </button>
-      </form>
+      </div>
 
       {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
       {notice && (
