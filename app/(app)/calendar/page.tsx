@@ -4,12 +4,14 @@ import {
   getCurrentUserActivitySeenAt,
   getEventAttachments,
   getEventComments,
+  getFinanceImports,
   getHouseholdMembers,
 } from "@/lib/queries";
 import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { resolveCalendarWindow } from "@/lib/calendar-window";
 import { SetupNotice } from "@/components/db-notice";
 import { CalendarEvents } from "./calendar-events";
+import { FinanceSection } from "./finance-section";
 
 export default async function CalendarPage({
   searchParams,
@@ -32,6 +34,7 @@ export default async function CalendarPage({
     activityRows,
     activitySeenAt,
     currentUserId,
+    financeImportsRows,
   ] = await Promise.all([
     getCalendarWindow(windowFrom, windowTo),
     getHouseholdMembers(),
@@ -41,6 +44,7 @@ export default async function CalendarPage({
     getActivity(),
     getCurrentUserActivitySeenAt(),
     getCurrentUserId(),
+    getFinanceImports(),
   ]);
 
   // Never baked into the (household-shared, cached) activity read itself —
@@ -53,7 +57,7 @@ export default async function CalendarPage({
 
   return (
     <div>
-      <h1 className="mb-4 text-2xl font-semibold tracking-tight">Calendar</h1>
+      <h1 className="mb-4 text-2xl font-semibold tracking-tight">Almanac</h1>
       {setupIssue && <SetupNotice issue={setupIssue} />}
       <CalendarEvents
         initialEvents={events}
@@ -68,6 +72,7 @@ export default async function CalendarPage({
         unseenCount={unseenCount}
         currentUserId={currentUserId}
       />
+      <FinanceSection initialImports={financeImportsRows} />
     </div>
   );
 }

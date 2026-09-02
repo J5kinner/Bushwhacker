@@ -15,6 +15,8 @@ import {
   recipes,
   users,
   userLocations,
+  financeAccounts,
+  financeImports,
 } from "@/db/schema";
 import type { Exdate } from "@/lib/recurrence";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
@@ -42,6 +44,11 @@ export const CACHE_TAGS = {
   // No dedicated tag — attachment add/remove busts `calendarEvents` instead
   // (the cache-tag matrix, design decision 6 of the shared-calendar plan;
   // see getEventAttachments below for the read-side half of that choice).
+  financeImports: "finance-imports",
+  // No cached query reads this tag yet — importFinanceCsv busts it on every
+  // import so a future finance overview query (PR 3) is correct from the
+  // first row written, the same reasoning as `users` above.
+  financeTransactions: "finance-transactions",
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -132,6 +139,36 @@ export async function getRecipes() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
   return fetchRecipes(householdId);
+}
+
+const fetchFinanceImports = unstable_cache(
+  (householdId: string) =>
+    timed("finance-imports", () =>
+      getDb()
+        .select({
+          id: financeImports.id,
+          filename: financeImports.filename,
+          rowCount: financeImports.rowCount,
+          periodStart: financeImports.periodStart,
+          periodEnd: financeImports.periodEnd,
+          importedAt: financeImports.importedAt,
+          accountName: financeAccounts.name,
+        })
+        .from(financeImports)
+        .innerJoin(financeAccounts, eq(financeAccounts.id, financeImports.accountId))
+        .where(eq(financeImports.householdId, householdId))
+        .orderBy(desc(financeImports.importedAt))
+        .limit(20),
+    ),
+  ["finance-imports"],
+  { tags: [CACHE_TAGS.financeImports] },
+);
+
+/** The household's most recent statement imports, newest first. Empty if no DB/household. */
+export async function getFinanceImports() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchFinanceImports(householdId);
 }
 
 async function selectCalendarWindow(
