@@ -25,6 +25,10 @@ import type { Exdate } from "@/lib/recurrence";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId, getCurrentUserId } from "./household";
 import { timed } from "./timing";
+import {
+  summariseFinanceTransactions,
+  type FinanceMonthOverview,
+} from "./finance-overview";
 import { isDbConfigured } from "@/db";
 
 /**
@@ -194,13 +198,6 @@ const fetchFinancePeriodTransactions = unstable_cache(
   { tags: [CACHE_TAGS.financeTransactions] },
 );
 
-export type FinanceMonthOverview = {
-  incomeCents: number;
-  expenseCents: number;
-  netCents: number;
-  categories: { category: string; totalCents: number }[];
-};
-
 const EMPTY_FINANCE_OVERVIEW: FinanceMonthOverview = {
   incomeCents: 0,
   expenseCents: 0,
@@ -214,9 +211,9 @@ const EMPTY_FINANCE_OVERVIEW: FinanceMonthOverview = {
  * only caller that computes those bounds — this function never derives
  * "today" itself, the same rule getCalendarWindow follows below).
  *
- * Aggregated here in JS rather than in SQL: a household's monthly row count
- * is small enough that a plain filtered select plus one pass over the rows
- * is simpler to read than groupBy/sum SQL, for the same cost.
+ * The aggregation itself is summariseFinanceTransactions (lib/finance-overview.ts),
+ * a pure function shared with scripts/finance-narrate.mjs, which reads the
+ * same rows outside the Next.js runtime — see ADR 0012.
  */
 export async function getFinanceMonthOverview(
   from: string,
@@ -225,26 +222,7 @@ export async function getFinanceMonthOverview(
   const householdId = await getHouseholdId();
   if (!householdId) return EMPTY_FINANCE_OVERVIEW;
   const rows = await fetchFinancePeriodTransactions(householdId, from, to);
-
-  let incomeCents = 0;
-  let expenseCents = 0;
-  const byCategory = new Map<string, number>();
-  for (const row of rows) {
-    if (row.amountCents > 0) {
-      incomeCents += row.amountCents;
-    } else {
-      const spent = -row.amountCents;
-      expenseCents += spent;
-      const key = row.category ?? "Uncategorised";
-      byCategory.set(key, (byCategory.get(key) ?? 0) + spent);
-    }
-  }
-
-  const categories = [...byCategory.entries()]
-    .map(([category, totalCents]) => ({ category, totalCents }))
-    .sort((a, b) => b.totalCents - a.totalCents);
-
-  return { incomeCents, expenseCents, netCents: incomeCents - expenseCents, categories };
+  return summariseFinanceTransactions(rows);
 }
 
 const fetchFinanceGoals = unstable_cache(

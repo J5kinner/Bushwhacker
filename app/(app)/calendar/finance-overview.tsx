@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCents } from "@/lib/finance-format";
-import type { FinanceMonthOverview } from "@/lib/queries";
+import type { FinanceMonthOverview } from "@/lib/finance-overview";
 
 /**
  * Income/expense/net cards plus a category breakdown for one period.
