@@ -15,11 +15,27 @@ import {
   recipes,
   users,
   userLocations,
+  financeAccounts,
+  financeImports,
+  financeTransactions,
+  financeGoals,
+  financeAnalyses,
 } from "@/db/schema";
 import type { Exdate } from "@/lib/recurrence";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId, getCurrentUserId } from "./household";
 import { timed } from "./timing";
+import {
+  summariseFinanceTransactions,
+  summariseFinanceTransactionsByAccount,
+  type FinanceMonthOverview,
+  type FinanceAccountTotals,
+} from "./finance-overview";
+import {
+  FINANCE_ACCOUNT_KINDS,
+  FINANCE_ACCOUNT_KIND_LABELS,
+  type FinanceAccountKind,
+} from "./finance-import";
 import { isDbConfigured } from "@/db";
 
 /**
@@ -42,6 +58,11 @@ export const CACHE_TAGS = {
   // No dedicated tag — attachment add/remove busts `calendarEvents` instead
   // (the cache-tag matrix, design decision 6 of the shared-calendar plan;
   // see getEventAttachments below for the read-side half of that choice).
+  financeAccounts: "finance-accounts",
+  financeImports: "finance-imports",
+  financeTransactions: "finance-transactions",
+  financeGoals: "finance-goals",
+  financeAnalyses: "finance-analyses",
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -132,6 +153,196 @@ export async function getRecipes() {
   const householdId = await getHouseholdId();
   if (!householdId) return [];
   return fetchRecipes(householdId);
+}
+
+const fetchFinanceImports = unstable_cache(
+  (householdId: string) =>
+    timed("finance-imports", () =>
+      getDb()
+        .select({
+          id: financeImports.id,
+          filename: financeImports.filename,
+          rowCount: financeImports.rowCount,
+          periodStart: financeImports.periodStart,
+          periodEnd: financeImports.periodEnd,
+          importedAt: financeImports.importedAt,
+          accountName: financeAccounts.name,
+        })
+        .from(financeImports)
+        .innerJoin(financeAccounts, eq(financeAccounts.id, financeImports.accountId))
+        .where(eq(financeImports.householdId, householdId))
+        .orderBy(desc(financeImports.importedAt))
+        .limit(20),
+    ),
+  ["finance-imports"],
+  { tags: [CACHE_TAGS.financeImports] },
+);
+
+/** The household's most recent statement imports, newest first. Empty if no DB/household. */
+export async function getFinanceImports() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchFinanceImports(householdId);
+}
+
+const fetchFinancePeriodTransactions = unstable_cache(
+  (householdId: string, from: string, to: string) =>
+    timed("finance-period-transactions", () =>
+      getDb()
+        .select({
+          accountId: financeTransactions.accountId,
+          amountCents: financeTransactions.amountCents,
+          category: financeTransactions.category,
+        })
+        .from(financeTransactions)
+        .where(
+          and(
+            eq(financeTransactions.householdId, householdId),
+            gte(financeTransactions.postedDate, from),
+            lte(financeTransactions.postedDate, to),
+          ),
+        ),
+    ),
+  ["finance-period-transactions"],
+  { tags: [CACHE_TAGS.financeTransactions] },
+);
+
+const EMPTY_FINANCE_OVERVIEW: FinanceMonthOverview = {
+  incomeCents: 0,
+  expenseCents: 0,
+  netCents: 0,
+  categories: [],
+};
+
+/**
+ * Income, expenses, net, and a spend-by-category breakdown for the inclusive
+ * `[from, to]` "YYYY-MM-DD" window (see lib/finance-period.ts, which is the
+ * only caller that computes those bounds — this function never derives
+ * "today" itself, the same rule getCalendarWindow follows below).
+ *
+ * The aggregation itself is summariseFinanceTransactions (lib/finance-overview.ts),
+ * a pure function shared with scripts/finance-narrate.mjs, which reads the
+ * same rows outside the Next.js runtime — see ADR 0012.
+ */
+export async function getFinanceMonthOverview(
+  from: string,
+  to: string,
+): Promise<FinanceMonthOverview> {
+  const householdId = await getHouseholdId();
+  if (!householdId) return EMPTY_FINANCE_OVERVIEW;
+  const rows = await fetchFinancePeriodTransactions(householdId, from, to);
+  return summariseFinanceTransactions(rows);
+}
+
+const fetchFinanceAccounts = unstable_cache(
+  (householdId: string) =>
+    timed("finance-accounts", () =>
+      getDb()
+        .select()
+        .from(financeAccounts)
+        .where(eq(financeAccounts.householdId, householdId)),
+    ),
+  ["finance-accounts"],
+  { tags: [CACHE_TAGS.financeAccounts] },
+);
+
+/** The household's finance accounts (however many of the 3 kinds have been imported at least once). */
+export async function getFinanceAccounts() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchFinanceAccounts(householdId);
+}
+
+export type FinanceAccountBreakdownRow = FinanceAccountTotals & {
+  kind: FinanceAccountKind;
+  name: string;
+};
+
+/**
+ * Income/expense/net for each of the 3 account kinds for the inclusive
+ * `[from, to]` window, shown separately rather than combined (see
+ * finance-account-breakdown.tsx). Always returns all 3 kinds, zeroed for one
+ * that has never had a statement imported yet, so the household sees "no
+ * data yet" rather than a missing row.
+ */
+export async function getFinanceAccountBreakdown(
+  from: string,
+  to: string,
+): Promise<FinanceAccountBreakdownRow[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) {
+    return FINANCE_ACCOUNT_KINDS.map((kind) => ({
+      kind,
+      name: FINANCE_ACCOUNT_KIND_LABELS[kind],
+      incomeCents: 0,
+      expenseCents: 0,
+      netCents: 0,
+    }));
+  }
+
+  const [accounts, rows] = await Promise.all([
+    fetchFinanceAccounts(householdId),
+    fetchFinancePeriodTransactions(householdId, from, to),
+  ]);
+  const totalsByAccountId = summariseFinanceTransactionsByAccount(rows);
+  const accountIdByKind = new Map(accounts.map((a) => [a.kind, a.id]));
+
+  return FINANCE_ACCOUNT_KINDS.map((kind) => {
+    const accountId = accountIdByKind.get(kind);
+    const totals = accountId ? totalsByAccountId.get(accountId) : undefined;
+    return {
+      kind,
+      name: FINANCE_ACCOUNT_KIND_LABELS[kind],
+      incomeCents: totals?.incomeCents ?? 0,
+      expenseCents: totals?.expenseCents ?? 0,
+      netCents: totals?.netCents ?? 0,
+    };
+  });
+}
+
+const fetchFinanceGoals = unstable_cache(
+  (householdId: string) =>
+    timed("finance-goals", () =>
+      getDb()
+        .select()
+        .from(financeGoals)
+        .where(and(eq(financeGoals.householdId, householdId), isNull(financeGoals.archivedAt)))
+        .orderBy(asc(financeGoals.createdAt)),
+    ),
+  ["finance-goals"],
+  { tags: [CACHE_TAGS.financeGoals] },
+);
+
+/** The household's active (non-archived) goals, oldest first. Empty if no DB/household. */
+export async function getFinanceGoals() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchFinanceGoals(householdId);
+}
+
+const fetchFinanceAnalyses = unstable_cache(
+  (householdId: string) =>
+    timed("finance-analyses", () =>
+      getDb()
+        .select()
+        .from(financeAnalyses)
+        .where(eq(financeAnalyses.householdId, householdId))
+        .orderBy(desc(financeAnalyses.createdAt))
+        .limit(12),
+    ),
+  ["finance-analyses"],
+  { tags: [CACHE_TAGS.financeAnalyses] },
+);
+
+/**
+ * The household's most recent local-model narratives (ADR 0012), newest
+ * first. Empty until scripts/finance-narrate.mjs has been run at least once,
+ * or if there is no DB/household.
+ */
+export async function getFinanceAnalyses() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchFinanceAnalyses(householdId);
 }
 
 async function selectCalendarWindow(
