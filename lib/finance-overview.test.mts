@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { summariseFinanceTransactions } from "./finance-overview.ts";
+import {
+  summariseFinanceTransactions,
+  summariseFinanceTransactionsByAccount,
+} from "./finance-overview.ts";
 
 test("summariseFinanceTransactions splits income and expenses", () => {
   const result = summariseFinanceTransactions([
@@ -41,4 +44,35 @@ test("summariseFinanceTransactions handles an empty period", () => {
     netCents: 0,
     categories: [],
   });
+});
+
+test("summariseFinanceTransactionsByAccount keeps each account's totals separate", () => {
+  const result = summariseFinanceTransactionsByAccount([
+    { accountId: "credit-card", amountCents: -700 },
+    { accountId: "credit-card", amountCents: -1646 },
+    { accountId: "savings", amountCents: 50000 },
+    { accountId: "home-loan", amountCents: -215000 },
+  ]);
+  assert.deepEqual(result.get("credit-card"), {
+    incomeCents: 0,
+    expenseCents: 2346,
+    netCents: -2346,
+  });
+  assert.deepEqual(result.get("savings"), {
+    incomeCents: 50000,
+    expenseCents: 0,
+    netCents: 50000,
+  });
+  assert.deepEqual(result.get("home-loan"), {
+    incomeCents: 0,
+    expenseCents: 215000,
+    netCents: -215000,
+  });
+});
+
+test("summariseFinanceTransactionsByAccount has no entry for an account with no rows", () => {
+  const result = summariseFinanceTransactionsByAccount([
+    { accountId: "credit-card", amountCents: -700 },
+  ]);
+  assert.equal(result.has("savings"), false);
 });

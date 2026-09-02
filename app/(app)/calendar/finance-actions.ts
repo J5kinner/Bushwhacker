@@ -131,6 +131,7 @@ export async function importFinanceCsv(
     })
     .returning({ id: financeTransactions.id });
 
+  if (insertedAccount) updateTag(CACHE_TAGS.financeAccounts);
   updateTag(CACHE_TAGS.financeImports);
   updateTag(CACHE_TAGS.financeTransactions);
 

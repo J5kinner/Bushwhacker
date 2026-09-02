@@ -38,3 +38,41 @@ export function summariseFinanceTransactions(
 
   return { incomeCents, expenseCents, netCents: incomeCents - expenseCents, categories };
 }
+
+export type FinanceAccountTotals = {
+  incomeCents: number;
+  expenseCents: number;
+  netCents: number;
+};
+
+/**
+ * Income/expense/net per account, keyed by accountId — the per-account
+ * breakdown on the Almanac page (each of the household's three accounts
+ * shown separately for one period, rather than combined). Category is
+ * deliberately not broken out here: the combined household breakdown from
+ * summariseFinanceTransactions above already covers "where did the money
+ * go", and a home loan or savings account rarely has more than one or two
+ * categories in a given month anyway.
+ */
+export function summariseFinanceTransactionsByAccount(
+  rows: { accountId: string; amountCents: number }[],
+): Map<string, FinanceAccountTotals> {
+  const byAccount = new Map<string, FinanceAccountTotals>();
+
+  for (const row of rows) {
+    const totals = byAccount.get(row.accountId) ?? {
+      incomeCents: 0,
+      expenseCents: 0,
+      netCents: 0,
+    };
+    if (row.amountCents > 0) {
+      totals.incomeCents += row.amountCents;
+    } else {
+      totals.expenseCents += -row.amountCents;
+    }
+    totals.netCents = totals.incomeCents - totals.expenseCents;
+    byAccount.set(row.accountId, totals);
+  }
+
+  return byAccount;
+}

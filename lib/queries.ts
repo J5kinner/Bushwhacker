@@ -27,8 +27,15 @@ import { getHouseholdId, getCurrentUserId } from "./household";
 import { timed } from "./timing";
 import {
   summariseFinanceTransactions,
+  summariseFinanceTransactionsByAccount,
   type FinanceMonthOverview,
+  type FinanceAccountTotals,
 } from "./finance-overview";
+import {
+  FINANCE_ACCOUNT_KINDS,
+  FINANCE_ACCOUNT_KIND_LABELS,
+  type FinanceAccountKind,
+} from "./finance-import";
 import { isDbConfigured } from "@/db";
 
 /**
@@ -51,6 +58,7 @@ export const CACHE_TAGS = {
   // No dedicated tag — attachment add/remove busts `calendarEvents` instead
   // (the cache-tag matrix, design decision 6 of the shared-calendar plan;
   // see getEventAttachments below for the read-side half of that choice).
+  financeAccounts: "finance-accounts",
   financeImports: "finance-imports",
   financeTransactions: "finance-transactions",
   financeGoals: "finance-goals",
@@ -182,6 +190,7 @@ const fetchFinancePeriodTransactions = unstable_cache(
     timed("finance-period-transactions", () =>
       getDb()
         .select({
+          accountId: financeTransactions.accountId,
           amountCents: financeTransactions.amountCents,
           category: financeTransactions.category,
         })
@@ -223,6 +232,72 @@ export async function getFinanceMonthOverview(
   if (!householdId) return EMPTY_FINANCE_OVERVIEW;
   const rows = await fetchFinancePeriodTransactions(householdId, from, to);
   return summariseFinanceTransactions(rows);
+}
+
+const fetchFinanceAccounts = unstable_cache(
+  (householdId: string) =>
+    timed("finance-accounts", () =>
+      getDb()
+        .select()
+        .from(financeAccounts)
+        .where(eq(financeAccounts.householdId, householdId)),
+    ),
+  ["finance-accounts"],
+  { tags: [CACHE_TAGS.financeAccounts] },
+);
+
+/** The household's finance accounts (however many of the 3 kinds have been imported at least once). */
+export async function getFinanceAccounts() {
+  const householdId = await getHouseholdId();
+  if (!householdId) return [];
+  return fetchFinanceAccounts(householdId);
+}
+
+export type FinanceAccountBreakdownRow = FinanceAccountTotals & {
+  kind: FinanceAccountKind;
+  name: string;
+};
+
+/**
+ * Income/expense/net for each of the 3 account kinds for the inclusive
+ * `[from, to]` window, shown separately rather than combined (see
+ * finance-account-breakdown.tsx). Always returns all 3 kinds, zeroed for one
+ * that has never had a statement imported yet, so the household sees "no
+ * data yet" rather than a missing row.
+ */
+export async function getFinanceAccountBreakdown(
+  from: string,
+  to: string,
+): Promise<FinanceAccountBreakdownRow[]> {
+  const householdId = await getHouseholdId();
+  if (!householdId) {
+    return FINANCE_ACCOUNT_KINDS.map((kind) => ({
+      kind,
+      name: FINANCE_ACCOUNT_KIND_LABELS[kind],
+      incomeCents: 0,
+      expenseCents: 0,
+      netCents: 0,
+    }));
+  }
+
+  const [accounts, rows] = await Promise.all([
+    fetchFinanceAccounts(householdId),
+    fetchFinancePeriodTransactions(householdId, from, to),
+  ]);
+  const totalsByAccountId = summariseFinanceTransactionsByAccount(rows);
+  const accountIdByKind = new Map(accounts.map((a) => [a.kind, a.id]));
+
+  return FINANCE_ACCOUNT_KINDS.map((kind) => {
+    const accountId = accountIdByKind.get(kind);
+    const totals = accountId ? totalsByAccountId.get(accountId) : undefined;
+    return {
+      kind,
+      name: FINANCE_ACCOUNT_KIND_LABELS[kind],
+      incomeCents: totals?.incomeCents ?? 0,
+      expenseCents: totals?.expenseCents ?? 0,
+      netCents: totals?.netCents ?? 0,
+    };
+  });
 }
 
 const fetchFinanceGoals = unstable_cache(

@@ -4,6 +4,7 @@ import {
   getCurrentUserActivitySeenAt,
   getEventAttachments,
   getEventComments,
+  getFinanceAccountBreakdown,
   getFinanceAnalyses,
   getFinanceGoals,
   getFinanceImports,
@@ -17,6 +18,7 @@ import { SetupNotice } from "@/components/db-notice";
 import { CalendarEvents } from "./calendar-events";
 import { FinanceSection } from "./finance-section";
 import { FinanceOverview } from "./finance-overview";
+import { FinanceAccountBreakdown } from "./finance-account-breakdown";
 import { FinanceGoals } from "./finance-goals";
 import { FinanceAnalyses } from "./finance-analyses";
 
@@ -47,6 +49,7 @@ export default async function CalendarPage({
     currentUserId,
     financeImportsRows,
     financeOverview,
+    financeAccountRows,
     financeGoalsRows,
     financeAnalysesRows,
   ] = await Promise.all([
@@ -60,6 +63,7 @@ export default async function CalendarPage({
     getCurrentUserId(),
     getFinanceImports(),
     getFinanceMonthOverview(financePeriod.from, financePeriod.to),
+    getFinanceAccountBreakdown(financePeriod.from, financePeriod.to),
     getFinanceGoals(),
     getFinanceAnalyses(),
   ]);
@@ -102,6 +106,11 @@ export default async function CalendarPage({
           nextPeriod={financePeriod.nextPeriod}
           overview={financeOverview}
         />
+
+        <h3 className="mt-6 mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+          By account
+        </h3>
+        <FinanceAccountBreakdown accounts={financeAccountRows} />
 
         <h3 className="mt-6 mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
           Goals
