@@ -112,3 +112,30 @@ test("computeDedupeHash differs when the running balance differs, even with iden
     computeDedupeHash("acct-1", second),
   );
 });
+
+const CREDIT_CARD_CSV = [
+  "Date,Description,Debit,Credit,Category,SubCategory",
+  "01/09/2026,Cali Press             Alexandria    Au,16.90,,Food & Beverage,Food & Groceries",
+  "01/09/2026,Sp Crumpler Australia  Melbourne     Au,230.00,,Retail & Personal,Clothing & Shoes",
+].join("\n");
+
+test("parseFinanceCsv accepts the credit card's header with no Balance column", () => {
+  const { rows } = parseFinanceCsv(CREDIT_CARD_CSV);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].amountCents, -1690);
+  assert.equal(rows[0].balanceCents, null);
+  assert.equal(rows[1].category, "Retail & Personal");
+});
+
+test("computeDedupeHash still differs by amount and description without a balance to fall back on", () => {
+  const [first, second] = parseFinanceCsv(CREDIT_CARD_CSV).rows;
+  assert.notEqual(
+    computeDedupeHash("acct-1", first),
+    computeDedupeHash("acct-1", second),
+  );
+});
+
+test("computeDedupeHash differs by account for the balance-less credit card format", () => {
+  const row = parseFinanceCsv(CREDIT_CARD_CSV).rows[0];
+  assert.notEqual(computeDedupeHash("acct-1", row), computeDedupeHash("acct-2", row));
+});

@@ -1,6 +1,6 @@
 # 0012. Finance ledger: bank-provided categories, and local-model narration outside the app
 
-- **Status:** Accepted
+- **Status:** Accepted, amended 2026-09-03 (see [Amendment](#amendment-2026-09-03-the-credit-card-csv-has-no-balance-column))
 - **Date:** 2026-09-02
 
 ## Context
@@ -9,6 +9,11 @@ HomeSync is adding a personal-finance ledger to the Almanac (the renamed Calenda
 bank statement CSVs (home loan, savings, credit card — all the same column layout) are imported,
 and a locally-run LLM (via LM Studio on a home gaming PC) writes a monthly narrative over the
 resulting numbers to help with budgeting.
+
+> **Amended 2026-09-03.** The credit card's CSV does not, in fact, share the other two accounts'
+> layout — it has no `Balance` column. See the
+> [amendment](#amendment-2026-09-03-the-credit-card-csv-has-no-balance-column) below for what
+> changed.
 
 Two things about this feature don't fit the app's usual shape.
 
@@ -49,6 +54,9 @@ import leaves the balance unchanged, while two distinct transactions leave it at
 values. The hash is unique per account, so re-importing an overlapping statement silently skips
 rows already on the ledger instead of double-counting them.
 
+> **Amended 2026-09-03.** This is true for home loan and savings only. See the
+> [amendment](#amendment-2026-09-03-the-credit-card-csv-has-no-balance-column) for the credit card.
+
 ## Consequences
 
 - Categorisation is only as good as the bank's own taxonomy. If it turns out to be too coarse for
@@ -65,3 +73,24 @@ rows already on the ledger instead of double-counting them.
   script can be re-run against a newer model or an edited prompt, the exact numbers behind a given
   summary need to travel with it rather than be re-derived from a ledger that may have changed
   since.
+
+## Amendment 2026-09-03: the credit card CSV has no Balance column
+
+The original decision assumed all three statement exports share one column layout.
+They don't.
+Home loan and savings export `Date,Description,Debit,Credit,Balance,Category,SubCategory`.
+The credit card exports `Date,Description,Debit,Credit,Category,SubCategory` — no running
+balance at all.
+
+**The parser now accepts either header shape**, matched by column count and name rather than by
+the account kind chosen in the upload UI.
+`finance_transactions.balance_cents` is now nullable: null whenever the CSV has no Balance column.
+Nothing reads `balance_cents` outside storage and the dedupe hash, so this cost nothing elsewhere.
+
+**The dedupe hash falls back to date + amount + description when there is no balance.**
+This reopens the exact ambiguity the balance was added to close: two genuinely separate
+transactions on the credit card, same day, same amount, same description (e.g. two identical
+coffees at the same cafe) will hash identically, and the second is silently skipped on import.
+This is accepted as a known limitation of the credit card's export rather than solved with
+something heavier (e.g. an ordinal tie-breaker within the file), consistent with this project's
+YAGNI stance — it can be revisited if it turns out to bite in practice.
