@@ -600,9 +600,11 @@ export const financeImports = pgTable(
  * genuinely separate transactions that happen to share a date, amount and
  * description (e.g. two identical purchases on the same day): they leave the
  * balance at two different values, whereas re-importing the same line leaves
- * it unchanged. `category`/`subcategory` are the bank's own, taken verbatim —
- * the statement already categorises every row, so there is no separate rules
- * table or model-categorisation step (ADR 0012).
+ * it unchanged. It is nullable because the credit card statement's CSV export
+ * carries no running balance column at all — see the ADR 0012 amendment.
+ * `category`/`subcategory` are the bank's own, taken verbatim — the statement
+ * already categorises every row, so there is no separate rules table or
+ * model-categorisation step (ADR 0012).
  */
 export const financeTransactions = pgTable(
   "finance_transactions",
@@ -620,7 +622,7 @@ export const financeTransactions = pgTable(
     postedDate: date("posted_date").notNull(),
     descriptionRaw: text("description_raw").notNull(),
     amountCents: integer("amount_cents").notNull(),
-    balanceCents: integer("balance_cents").notNull(),
+    balanceCents: integer("balance_cents"),
     category: text("category"),
     subcategory: text("subcategory"),
     dedupeHash: text("dedupe_hash").notNull(),

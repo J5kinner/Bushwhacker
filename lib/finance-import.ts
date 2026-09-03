@@ -4,10 +4,11 @@
  * the same split as lib/recipe-import.ts.
  *
  * The three accounts this household has (home loan, savings, credit card)
- * all export the same statement layout: `Date,Description,Debit,Credit,
- * Balance,Category,SubCategory`, dates as DD/MM/YYYY, and the bank already
- * categorises every row — see ADR 0012 for why that means there is no rules
- * or model-categorisation step here.
+ * export statements as DD/MM/YYYY dates with the bank already categorising
+ * every row — see ADR 0012 for why that means there is no rules or
+ * model-categorisation step here. Home loan and savings share one column
+ * layout with a running `Balance`; the credit card's export has no such
+ * column (see the ADR 0012 amendment) — both are accepted here.
  */
 
 import { createHash } from "node:crypto";
@@ -25,7 +26,7 @@ export const FINANCE_ACCOUNT_KIND_LABELS: Record<FinanceAccountKind, string> = {
   credit_card: "Credit Card",
 };
 
-const EXPECTED_HEADER = [
+const HEADER_WITH_BALANCE = [
   "Date",
   "Description",
   "Debit",
@@ -35,14 +36,17 @@ const EXPECTED_HEADER = [
   "SubCategory",
 ];
 
+/** The credit card's export carries no running balance column at all. */
+const HEADER_WITHOUT_BALANCE = ["Date", "Description", "Debit", "Credit", "Category", "SubCategory"];
+
 export type ParsedFinanceRow = {
   /** ISO "YYYY-MM-DD". */
   postedDate: string;
   descriptionRaw: string;
   /** Signed: a credit is positive, a debit negative. */
   amountCents: number;
-  /** The bank's own running balance after this transaction. */
-  balanceCents: number;
+  /** The bank's own running balance after this transaction, or null when the CSV has no Balance column. */
+  balanceCents: number | null;
   category: string | null;
   subcategory: string | null;
 };
@@ -107,6 +111,13 @@ function parseCents(raw: string, field: string, context: string): number {
   return Math.round(value * 100);
 }
 
+function headerMatches(header: string[], expected: string[]): boolean {
+  return (
+    header.length === expected.length &&
+    header.every((h, i) => h.toLowerCase() === expected[i].toLowerCase())
+  );
+}
+
 /**
  * Parses a full statement CSV. Throws FinanceImportError on the first
  * malformed row rather than skipping it — a household statement export is
@@ -120,12 +131,11 @@ export function parseFinanceCsv(csvText: string): ParsedFinanceCsv {
   }
 
   const header = splitCsvLine(lines[0]).map((h) => h.trim());
-  const headerMatches =
-    header.length === EXPECTED_HEADER.length &&
-    header.every((h, i) => h.toLowerCase() === EXPECTED_HEADER[i].toLowerCase());
-  if (!headerMatches) {
+  const hasBalance = headerMatches(header, HEADER_WITH_BALANCE);
+  const expectedHeader = hasBalance ? HEADER_WITH_BALANCE : HEADER_WITHOUT_BALANCE;
+  if (!hasBalance && !headerMatches(header, HEADER_WITHOUT_BALANCE)) {
     throw new FinanceImportError(
-      `Unexpected CSV columns. Expected "${EXPECTED_HEADER.join(",")}", got "${header.join(",")}".`,
+      `Unexpected CSV columns. Expected "${HEADER_WITH_BALANCE.join(",")}" or "${HEADER_WITHOUT_BALANCE.join(",")}", got "${header.join(",")}".`,
     );
   }
 
@@ -134,13 +144,21 @@ export function parseFinanceCsv(csvText: string): ParsedFinanceCsv {
     const lineNumber = i + 1;
     const context = `Row ${lineNumber}`;
     const fields = splitCsvLine(lines[i]).map((f) => f.trim());
-    if (fields.length !== EXPECTED_HEADER.length) {
+    if (fields.length !== expectedHeader.length) {
       throw new FinanceImportError(
-        `${context}: expected ${EXPECTED_HEADER.length} columns, got ${fields.length}.`,
+        `${context}: expected ${expectedHeader.length} columns, got ${fields.length}.`,
       );
     }
-    const [dateRaw, descriptionRaw, debitRaw, creditRaw, balanceRaw, categoryRaw, subcategoryRaw] =
-      fields;
+    let dateRaw: string, descriptionRaw: string, debitRaw: string, creditRaw: string;
+    let balanceRaw: string | null;
+    let categoryRaw: string, subcategoryRaw: string;
+    if (hasBalance) {
+      [dateRaw, descriptionRaw, debitRaw, creditRaw, balanceRaw, categoryRaw, subcategoryRaw] =
+        fields;
+    } else {
+      [dateRaw, descriptionRaw, debitRaw, creditRaw, categoryRaw, subcategoryRaw] = fields;
+      balanceRaw = null;
+    }
 
     if (!descriptionRaw) {
       throw new FinanceImportError(`${context}: missing description.`);
@@ -160,7 +178,7 @@ export function parseFinanceCsv(csvText: string): ParsedFinanceCsv {
       amountCents: hasDebit
         ? -parseCents(debitRaw, "debit", context)
         : parseCents(creditRaw, "credit", context),
-      balanceCents: parseCents(balanceRaw, "balance", context),
+      balanceCents: balanceRaw === null ? null : parseCents(balanceRaw, "balance", context),
       category: categoryRaw || null,
       subcategory: subcategoryRaw || null,
     });
@@ -179,13 +197,18 @@ export function parseFinanceCsv(csvText: string): ParsedFinanceCsv {
 }
 
 /**
- * See ADR 0012: these statements carry no bank transaction id, so the
- * running balance is included as the tie-breaker between a true duplicate
- * import and two separate transactions that happen to share a date, amount
- * and description — the balance differs for the latter.
+ * See ADR 0012 (and its amendment): these statements carry no bank
+ * transaction id, so the running balance, where the CSV has one, is included
+ * as the tie-breaker between a true duplicate import and two separate
+ * transactions that happen to share a date, amount and description — the
+ * balance differs for the latter. The credit card's CSV has no balance
+ * column, so its dedupe hash falls back to date + amount + description
+ * alone; two genuinely separate transactions on the same card with the same
+ * date, amount and description will collide and the second is skipped.
  */
 export function computeDedupeHash(accountId: string, row: ParsedFinanceRow): string {
+  const balancePart = row.balanceCents === null ? "" : `|${row.balanceCents}`;
   return createHash("sha256")
-    .update(`${accountId}|${row.postedDate}|${row.amountCents}|${row.descriptionRaw}|${row.balanceCents}`)
+    .update(`${accountId}|${row.postedDate}|${row.amountCents}|${row.descriptionRaw}${balancePart}`)
     .digest("hex");
 }
