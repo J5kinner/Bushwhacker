@@ -90,6 +90,33 @@ test("parseFinanceCsv rejects an empty file", () => {
   assert.throws(() => parseFinanceCsv(""), FinanceImportError);
 });
 
+test("parseFinanceCsv pads a row whose trailing SubCategory field was dropped entirely", () => {
+  // The home loan account's export omits a wholly-empty trailing column
+  // rather than leaving a trailing comma, so these rows have 6 fields
+  // against a 7-column header.
+  const csv = [
+    "Date,Description,Debit,Credit,Balance,Category,SubCategory",
+    "05/08/2026,Repaymt A/C Tfr,,2853.00,455142.10,",
+    "04/08/2026,Loan A/C Fee,,.00,457995.10,",
+  ].join("\n");
+  const { rows } = parseFinanceCsv(csv);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].postedDate, "2026-08-05");
+  assert.equal(rows[0].amountCents, 285300);
+  assert.equal(rows[0].balanceCents, 45514210);
+  assert.equal(rows[0].category, null);
+  assert.equal(rows[0].subcategory, null);
+  assert.equal(rows[1].amountCents, 0);
+});
+
+test("parseFinanceCsv rejects a row missing a required column", () => {
+  const csv = [
+    "Date,Description,Debit,Credit,Balance,Category,SubCategory",
+    "01/09/2026,Too short,5.00",
+  ].join("\n");
+  assert.throws(() => parseFinanceCsv(csv), FinanceImportError);
+});
+
 test("computeDedupeHash is stable for the same account and row", () => {
   const row = parseFinanceCsv(SAMPLE_CSV).rows[0];
   assert.equal(computeDedupeHash("acct-1", row), computeDedupeHash("acct-1", row));

@@ -35,6 +35,9 @@ const EXPECTED_HEADER = [
   "SubCategory",
 ];
 
+/** Date, Description, Debit, Credit, Balance — the columns every row must carry. */
+const REQUIRED_COLUMNS = 5;
+
 export type ParsedFinanceRow = {
   /** ISO "YYYY-MM-DD". */
   postedDate: string;
@@ -134,11 +137,15 @@ export function parseFinanceCsv(csvText: string): ParsedFinanceCsv {
     const lineNumber = i + 1;
     const context = `Row ${lineNumber}`;
     const fields = splitCsvLine(lines[i]).map((f) => f.trim());
-    if (fields.length !== EXPECTED_HEADER.length) {
+    // The home loan account's export drops trailing empty Category/SubCategory
+    // fields entirely instead of leaving a trailing comma, so a row can be
+    // shorter than the header — pad it back out rather than reject it.
+    if (fields.length < REQUIRED_COLUMNS || fields.length > EXPECTED_HEADER.length) {
       throw new FinanceImportError(
-        `${context}: expected ${EXPECTED_HEADER.length} columns, got ${fields.length}.`,
+        `${context}: expected ${REQUIRED_COLUMNS}-${EXPECTED_HEADER.length} columns, got ${fields.length}.`,
       );
     }
+    while (fields.length < EXPECTED_HEADER.length) fields.push("");
     const [dateRaw, descriptionRaw, debitRaw, creditRaw, balanceRaw, categoryRaw, subcategoryRaw] =
       fields;
 
