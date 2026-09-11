@@ -4,21 +4,36 @@ import {
   getCurrentUserActivitySeenAt,
   getEventAttachments,
   getEventComments,
+  getFinanceAccountBreakdown,
+  getFinanceAnalyses,
+  getFinanceGoals,
+  getFinanceImports,
+  getFinanceMonthOverview,
   getHouseholdMembers,
 } from "@/lib/queries";
 import { getSetupIssue, getCurrentUserId } from "@/lib/household";
 import { resolveCalendarWindow } from "@/lib/calendar-window";
+import { resolveFinancePeriod } from "@/lib/finance-period";
 import { SetupNotice } from "@/components/db-notice";
 import { CalendarEvents } from "./calendar-events";
+import { FinanceSection } from "./finance-section";
+import { FinanceOverview } from "./finance-overview";
+import { FinanceAccountBreakdown } from "./finance-account-breakdown";
+import { FinanceGoals } from "./finance-goals";
+import { FinanceAnalyses } from "./finance-analyses";
 
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ m?: string }>;
+  searchParams: Promise<{ m?: string; fp?: string }>;
 }) {
-  const { m } = await searchParams;
+  const { m, fp } = await searchParams;
   const now = new Date();
   const { anchorMonth, windowFrom, windowTo } = resolveCalendarWindow(m, {
+    year: now.getUTCFullYear(),
+    month: now.getUTCMonth() + 1,
+  });
+  const financePeriod = resolveFinancePeriod(fp, {
     year: now.getUTCFullYear(),
     month: now.getUTCMonth() + 1,
   });
@@ -32,6 +47,11 @@ export default async function CalendarPage({
     activityRows,
     activitySeenAt,
     currentUserId,
+    financeImportsRows,
+    financeOverview,
+    financeAccountRows,
+    financeGoalsRows,
+    financeAnalysesRows,
   ] = await Promise.all([
     getCalendarWindow(windowFrom, windowTo),
     getHouseholdMembers(),
@@ -41,7 +61,16 @@ export default async function CalendarPage({
     getActivity(),
     getCurrentUserActivitySeenAt(),
     getCurrentUserId(),
+    getFinanceImports(),
+    getFinanceMonthOverview(financePeriod.from, financePeriod.to),
+    getFinanceAccountBreakdown(financePeriod.from, financePeriod.to),
+    getFinanceGoals(),
+    getFinanceAnalyses(),
   ]);
+
+  const financeCategoryTotals = new Map(
+    financeOverview.categories.map((c) => [c.category, c.totalCents]),
+  );
 
   // Never baked into the (household-shared, cached) activity read itself —
   // see getCurrentUserActivitySeenAt's own doc comment — so the unseen count
@@ -53,7 +82,7 @@ export default async function CalendarPage({
 
   return (
     <div>
-      <h1 className="mb-4 text-2xl font-semibold tracking-tight">Calendar</h1>
+      <h1 className="mb-4 text-2xl font-semibold tracking-tight">Almanac</h1>
       {setupIssue && <SetupNotice issue={setupIssue} />}
       <CalendarEvents
         initialEvents={events}
@@ -68,6 +97,35 @@ export default async function CalendarPage({
         unseenCount={unseenCount}
         currentUserId={currentUserId}
       />
+      <section className="mt-10 border-t border-black/10 pt-6 dark:border-white/10">
+        <h2 className="mb-4 text-xl font-semibold tracking-tight">Finances</h2>
+
+        <FinanceOverview
+          period={financePeriod.period}
+          prevPeriod={financePeriod.prevPeriod}
+          nextPeriod={financePeriod.nextPeriod}
+          overview={financeOverview}
+        />
+
+        <h3 className="mt-6 mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+          By account
+        </h3>
+        <FinanceAccountBreakdown accounts={financeAccountRows} />
+
+        <h3 className="mt-6 mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+          Goals
+        </h3>
+        <FinanceGoals goals={financeGoalsRows} categoryTotals={financeCategoryTotals} />
+
+        <h3 className="mt-6 mb-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+          Monthly summaries
+        </h3>
+        <FinanceAnalyses analyses={financeAnalysesRows} />
+
+        <div className="mt-6">
+          <FinanceSection initialImports={financeImportsRows} />
+        </div>
+      </section>
     </div>
   );
 }

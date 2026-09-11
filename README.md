@@ -186,13 +186,14 @@ Every script in [`package.json`](package.json):
 | `pnpm db:migrate` | Applies pending migrations to the database in `DATABASE_URL`. Step 4 above. |
 | `pnpm db:studio` | Opens Drizzle Studio, a browser UI for browsing and editing rows in your Neon database. |
 
-Three helper scripts are not wired to `pnpm` aliases and are run with `node`:
+Four helper scripts are not wired to `pnpm` aliases and are run with `node`:
 
 | Command | What it does |
 | --- | --- |
 | `node scripts/seed.mjs` | Seeds or re-syncs the household and its members from `SEED_MEMBERS` (step 5). |
 | `node scripts/db-check.mjs [counts\|insert\|clean]` | `counts` (the default) prints row counts for the core tables; `insert` writes a marked `__VERIFY__` shopping item; `clean` deletes those marked rows again. |
 | `node scripts/db-inspect.mjs` | Read-only inventory of the database: tables with row estimates, views, sequences, and enum types. |
+| `node scripts/finance-narrate.mjs [YYYY-MM]` | Writes one local-model narrative for the Almanac's Finances section (default: current month). Needs LM Studio running locally — see `LMSTUDIO_MODEL` below and [ADR 0012](docs/decisions/0012-finance-ledger-local-narration.md). |
 
 ---
 

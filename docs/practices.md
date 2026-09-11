@@ -8,7 +8,7 @@ This is the detail behind the conventions in [AGENTS.md](../AGENTS.md); read tha
 - Design for a phone held in one hand, then scale up — never the reverse.
 - Use Tailwind's mobile-first classes: unprefixed utilities are the phone layout;
   add `sm:`/`md:` only to adapt upward.
-- Primary navigation is a bottom tab bar (Shopping, Recipes, Calendar, Location, Settings) using
+- Primary navigation is a bottom tab bar (Shopping, Recipes, Almanac, Location, Settings) using
   Lucide icons, sized for a thumb — see [`components/bottom-nav.tsx`](../components/bottom-nav.tsx).
 - Keep tap targets large, contrast high, and interactions single-handed.
 

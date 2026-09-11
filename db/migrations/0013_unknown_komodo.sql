@@ -1,0 +1,1 @@
+ALTER TABLE "finance_transactions" ALTER COLUMN "balance_cents" DROP NOT NULL;

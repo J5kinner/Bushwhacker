@@ -10,7 +10,8 @@ rules and add only what is specific to that tool.
 
 **Bushwhacker** is the repository for **HomeSync** — a lightweight, highly responsive,
 mobile-first web app that helps a two-person household manage daily life: a shared shopping
-list, recipes, a shared calendar, location sharing, and shared chores.
+list, recipes, the Almanac (the shared calendar, plus a personal-finance ledger), location
+sharing, and shared chores.
 It is installed as a Progressive Web App via "Add to Home Screen" and runs on Vercel.
 
 ## Agent persona

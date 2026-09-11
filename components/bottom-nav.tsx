@@ -13,7 +13,7 @@ import {
 const TABS = [
   { href: "/shopping", label: "Shopping", Icon: ShoppingCart },
   { href: "/recipes", label: "Recipes", Icon: BookOpen },
-  { href: "/calendar", label: "Calendar", Icon: CalendarDays },
+  { href: "/calendar", label: "Almanac", Icon: CalendarDays },
   { href: "/location", label: "Location", Icon: MapPin },
   { href: "/settings", label: "Settings", Icon: Settings },
 ] as const;
