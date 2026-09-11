@@ -8,8 +8,8 @@ This is the detail behind the conventions in [AGENTS.md](../AGENTS.md); read tha
 - Design for a phone held in one hand, then scale up — never the reverse.
 - Use Tailwind's mobile-first classes: unprefixed utilities are the phone layout;
   add `sm:`/`md:` only to adapt upward.
-- Primary navigation is a bottom tab bar (Shopping, Calendar, Chores, Settings) using Lucide icons,
-  sized for a thumb.
+- Primary navigation is a bottom tab bar (Shopping, Recipes, Calendar, Location, Settings) using
+  Lucide icons, sized for a thumb — see [`components/bottom-nav.tsx`](../components/bottom-nav.tsx).
 - Keep tap targets large, contrast high, and interactions single-handed.
 
 ## Data and mutations
@@ -39,8 +39,9 @@ This is the detail behind the conventions in [AGENTS.md](../AGENTS.md); read tha
 ## Authentication
 
 - Auth is scoped to the **two** household accounts — this is not a multi-tenant product.
-- Prefer a simple, secure mechanism (password or magic-link); do not build role systems or
-  invitations that YAGNI rules out.
+- Sign-in is Google OAuth through Auth.js (`auth.ts`), gated by the `ALLOWED_EMAILS` allowlist
+  rather than sign-ups.
+  Do not build role systems or invitations that YAGNI rules out.
 
 ## PWA
 
@@ -52,9 +53,9 @@ This is the detail behind the conventions in [AGENTS.md](../AGENTS.md); read tha
 
 A task is not done until you have shown proof:
 
-- `pnpm run build` compiles.
+- `pnpm run build` compiles — this is also the type-check; there is no separate `typecheck` script.
 - `pnpm run lint` passes.
-- Type-checking passes.
+- `pnpm test` passes (`node --test` over the `lib/*.test.mts` suite).
 - Database queries for the change actually succeed.
 
 Paste the relevant command output into the PR.

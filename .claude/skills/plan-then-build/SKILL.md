@@ -23,28 +23,21 @@ Skip only for genuinely trivial, single-file edits (a typo, a copy tweak).
 
 1. **Plan.** Print a short, bulleted implementation plan: what files change, what the data/UI
    change is, and what you will verify. Keep it to the request — no speculative scope.
-2. **Forecast review load.** Estimate the change against RCLI
-   ([ADR 0002](../../../docs/decisions/0002-reviewer-cognitive-load-index.md)): roughly how many
-   files, how much new complexity, how scattered. If the change forecasts **high** (or dispersion
-   looks like it will dominate), split it into multiple PRs landed in dependency order, and say so
-   in the plan.
+2. **Forecast review load.** Judge how hard the change will be to review: how many files, how much
+   new complexity, how scattered across the codebase. If it looks heavy on any of those — scattered
+   especially — split it into multiple PRs landed in dependency order and say so in the plan.
+   ([ADR 0002](../../../docs/decisions/0002-reviewer-cognitive-load-index.md) is the reasoning
+   behind those three channels. It is a plan-time judgement, not a score to compute: its inputs
+   come from a diff that does not exist yet.)
 3. **Grill if non-obvious.** If the plan has open questions or unexamined assumptions, run
    [`grill-my-plan`](../grill-my-plan/SKILL.md) first and record any real decision as an ADR.
 4. **Confirm.** Wait for the user's go-ahead on the plan before writing code.
 5. **Branch.** Work on a task-named branch (e.g. `add-shopping-categories`), never on `main`.
 6. **Build.** Implement to the plan. Server Actions for mutations; mobile-first Tailwind;
    optimistic UI for the shopping and chore lists (see [practices](../../../docs/practices.md)).
-7. **Verify.** `pnpm run build`, `pnpm run lint`, type-check, and confirm DB queries succeed.
-   Paste the output — no success claims without evidence.
+7. **Verify.** `pnpm run build` (which type-checks), `pnpm run lint`, `pnpm test`, and confirm DB
+   queries succeed. Paste the output — no success claims without evidence.
 8. **PR.** Open a PR with [`pr-description`](../pr-description/SKILL.md), open the Vercel preview
    on a phone, review your own diff, then self-merge.
 
-## Red flags — stop and plan first
-
-- "It's faster to just start coding."
-- "I'll write the plan after, once I know it works."
-- "This bug fix grew into a refactor while I was in there."
-- "I'll verify later / it obviously compiles."
-
-Each of these means: stop, write the plan, and get confirmation before continuing.
-Growing scope mid-change means going back to step 1, not carrying on.
+If scope grows mid-change, go back to step 1 and re-plan rather than carrying on.

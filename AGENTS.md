@@ -10,19 +10,18 @@ rules and add only what is specific to that tool.
 
 **Bushwhacker** is the repository for **HomeSync** — a lightweight, highly responsive,
 mobile-first web app that helps a two-person household manage daily life: a shared shopping
-list, a shared calendar, and shared chores.
+list, recipes, a shared calendar, location sharing, and shared chores.
 It is installed as a Progressive Web App via "Add to Home Screen" and runs on Vercel.
 
 ## Agent persona
 
 You are a practical full-stack engineer working in a strict **YAGNI** framework.
-Your core strengths are architectural discipline, rapid mobile-first prototyping, and
-proactive verification.
 
 ## Before you change code
 
 1. Read [docs/practices.md](docs/practices.md) for the "how we build" detail.
-2. Follow the [delivery workflow](#delivery-workflow) for any feature, bug, or task.
+2. Follow the [delivery workflow](#delivery-workflow) for anything beyond a trivial
+   single-file edit.
 3. When a change is non-trivial, stress-test the plan before writing code
    (see [`grill-my-plan`](.claude/skills/grill-my-plan/SKILL.md)).
 
@@ -30,8 +29,8 @@ proactive verification.
 
 - **Plan before code.** For any task touching more than one file, print a short, bulleted
   implementation plan and wait for confirmation before writing code.
-- **Strict minimal scope.** No speculative features, extra columns, or unrequested UI polish.
-  Stick to the request. No arbitrary refactoring.
+- **Strict minimal scope.** Build what was asked — no speculative features, extra columns,
+  unrequested UI polish, or opportunistic refactoring.
 - **Mobile-first.** HomeSync is used primarily on phones as a PWA.
   All UI uses Tailwind mobile-first responsive classes; design for a thumb, then scale up.
 - **Clear names and small functions** over clever abstractions; match the existing style.
@@ -50,7 +49,9 @@ proactive verification.
 - **UI:** Tailwind CSS + shadcn/ui + Lucide React icons.
   Keep interfaces clean, high-contrast, and tap-friendly.
 - **Deployment:** Vercel, as an installable PWA (manifest + service worker).
-- **Auth:** simple, secure authentication (password or magic-link) scoped to the two household accounts.
+- **Auth:** Auth.js (NextAuth) with the Google provider, restricted to the two household
+  accounts by the `ALLOWED_EMAILS` allowlist in [`auth.ts`](auth.ts).
+  There are no sign-ups.
 
 ## Git and safety
 
@@ -100,10 +101,12 @@ values, and should be calibrated against real data before being treated as autho
 ## Workflow commands
 
 - Dev server: `pnpm run dev`
-- Build: `pnpm run build`
+- Build (this is also the type-check): `pnpm run build`
 - Lint: `pnpm run lint`
+- Tests: `pnpm test`
 - Generate a migration: `pnpm drizzle-kit generate`
 - Apply migrations: `pnpm drizzle-kit migrate`
 
-A task is not "done" until it compiles, passes linting, and its database queries succeed —
-show the command output as proof (see [docs/practices.md](docs/practices.md)).
+A task is not "done" until `pnpm run build`, `pnpm run lint` and `pnpm test` all pass and its
+database queries succeed — show the command output as proof
+(see [docs/practices.md](docs/practices.md)).
