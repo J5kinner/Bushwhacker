@@ -81,6 +81,11 @@ function groupByCategory(items: ShoppingItem[], categories: string[]) {
     const key = item.category?.trim() || OTHER;
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(item);
   }
+  for (const group of groups.values()) {
+    // Bought items sink to the bottom of their category so the unbought
+    // items needing attention stay at the top.
+    group.sort((a, b) => Number(a.checked) - Number(b.checked));
+  }
   return [...groups.entries()].sort(([a], [b]) => {
     const rank = categoryRank(a, categories) - categoryRank(b, categories);
     return rank !== 0 ? rank : a.localeCompare(b);
