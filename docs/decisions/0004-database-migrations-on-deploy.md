@@ -43,11 +43,15 @@ and guard the generate step in **CI**.
   `db:migrate` is idempotent — it applies only pending migrations and is a no-op otherwise — so it
   runs harmlessly on every deploy.
   This requires `DATABASE_URL` to be present at build time.
-- **Preview isolation via Neon branching.**
-  The Neon–Vercel integration injects `DATABASE_URL` per environment and gives each preview
-  deployment its own Neon branch, so preview builds migrate an isolated copy of the data rather
-  than production.
-  This is an account-side setup, not a repository change.
+- **Preview isolation via Neon branching — account-side prerequisite, not yet confirmed.**
+  The Neon–Vercel integration *can* inject `DATABASE_URL` per environment and give each preview
+  deployment its own Neon branch, so preview builds would migrate an isolated copy of the data
+  rather than production.
+  This is an account-side setup, not a repository change, and nothing in this repository verifies
+  it is in place — see open question 2 in
+  [preview deployments](../preview-deployments.md#open-questions-for-a-human).
+  Until someone with dashboard access confirms it, assume a preview build migrates and writes the
+  **production** database.
 - **CI generate-guard.**
   A `migrations` job in [`ci.yml`](../../.github/workflows/ci.yml) runs `pnpm db:generate` and fails
   if the working tree gains an uncommitted migration, i.e. a schema change was merged without its

@@ -22,8 +22,8 @@ Summary in the imperative, lower case, no full stop.
 2. **Changes** — a short bullet list of the substantive changes (not a file-by-file dump).
 3. **Acceptance criteria** — a numbered checklist a reviewer can tick off to confirm it does what
    it should.
-4. **Test plan** — how it was verified: the commands run (`build`, `lint`, type-check), and a note
-   to open the **Vercel preview URL on a phone** and confirm the mobile flow.
+4. **Test plan** — how it was verified: the commands run (`build`, `lint`, `test`), and a note to
+   open the **Vercel preview URL on a phone** and confirm the mobile flow.
 5. **Notes** — anything a reviewer needs: linked ADRs, follow-ups, deliberate out-of-scope, or
    "none".
 
@@ -47,7 +47,7 @@ phone. Categories come from the item's `category` column; uncategorised items fa
 3. Items with no category appear under "Other".
 
 ## Test plan
-- `pnpm run build`, `pnpm run lint`, type-check — all pass.
+- `pnpm run build`, `pnpm run lint`, `pnpm test` — all pass.
 - Verified add / check-off / group collapse on the Vercel preview on iOS Safari (standalone PWA).
 
 ## Notes
