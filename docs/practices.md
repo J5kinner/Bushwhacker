@@ -29,6 +29,11 @@ This is the detail behind the conventions in [AGENTS.md](../AGENTS.md); read tha
 4. `pnpm drizzle-kit migrate` to apply.
 5. Never hand-edit an already-applied migration; add a new one.
 
+Steps 4 and 5 are **enforced, not asked** ([ADR 0014](decisions/0014-deterministic-guardrails.md)):
+a hook denies edits to `db/migrations/*.sql`, and anything that applies migrations pauses for
+explicit human permission because `.env.local` points at the production database.
+`pnpm db:generate` is untouched.
+
 ## Optimistic UI
 
 - The shopping list and chores must feel instantaneous on cellular data.
