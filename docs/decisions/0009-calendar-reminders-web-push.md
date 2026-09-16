@@ -6,7 +6,7 @@
 ## Context
 
 The shared-calendar TimeTree-parity plan
-(`docs/superpowers/plans/2026-08-18-shared-calendar-timetree-parity.md`) calls for a per-event
+(`docs/changes/2026-08-18-shared-calendar-timetree-parity/plan.md`) calls for a per-event
 reminder offset, plus web push for both reminders and partner-activity notifications ("Sam added
 'Dentist'").
 This is PR 8 of the plan (M5).

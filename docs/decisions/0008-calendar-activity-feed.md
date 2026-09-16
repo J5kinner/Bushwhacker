@@ -6,7 +6,7 @@
 ## Context
 
 The shared-calendar TimeTree-parity plan
-(`docs/superpowers/plans/2026-08-18-shared-calendar-timetree-parity.md`) calls for an activity
+(`docs/changes/2026-08-18-shared-calendar-timetree-parity/plan.md`) calls for an activity
 feed — who created, edited, deleted, or commented on which event, and when — plus a per-user
 unread badge, and event comments as a per-event thread (deliberately "comments", not "chat";
 push notifications, not typing indicators or read receipts, are what supplies the immediacy).

@@ -24,8 +24,9 @@ Summary in the imperative, lower case, no full stop.
    it should.
 4. **Test plan** — how it was verified: the commands run (`build`, `lint`, `test`), and a note to
    open the **Vercel preview URL on a phone** and confirm the mobile flow.
-5. **Notes** — anything a reviewer needs: linked ADRs, follow-ups, deliberate out-of-scope, or
-   "none".
+5. **Notes** — anything a reviewer needs: a link to the change's folder under
+   [`docs/changes/`](../../../docs/changes/) when it has one, linked ADRs, follow-ups, deliberate
+   out-of-scope, or "none".
 
 ## Example
 

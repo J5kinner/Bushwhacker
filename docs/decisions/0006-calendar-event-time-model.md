@@ -6,7 +6,7 @@
 ## Context
 
 The calendar tab is being brought to TimeTree-premium parity in a series of small PRs (see the
-plan at `docs/superpowers/plans/2026-08-18-shared-calendar-timetree-parity.md`).
+plan at `docs/changes/2026-08-18-shared-calendar-timetree-parity/plan.md`).
 The first of those, PR 1a, extends `calendar_events` from date-only rows to a model that also
 carries a time of day, a location, a URL, a colour label, and an attendee set.
 Existing rows must stay valid without a backfill, because the migration is purely additive.

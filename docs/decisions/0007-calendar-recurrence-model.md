@@ -6,7 +6,7 @@
 ## Context
 
 The shared-calendar TimeTree-parity plan
-(`docs/superpowers/plans/2026-08-18-shared-calendar-timetree-parity.md`) calls for recurring
+(`docs/changes/2026-08-18-shared-calendar-timetree-parity/plan.md`) calls for recurring
 events — daily/weekly/monthly/yearly, an interval, a weekday set, and an inclusive end date —
 plus editing or deleting either a single occurrence or the whole series.
 This PR (3 of the plan) lands only the pure expansion library and its frozen `Occurrence`

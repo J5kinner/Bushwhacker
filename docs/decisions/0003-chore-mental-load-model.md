@@ -50,7 +50,7 @@ CLI        = round( min(100, StageScore · (1 + 0.15·inv) · (1 + 0.10·frag)) 
 - "Plan the weekly meals & shopping" — `A3 I2 D2 M2, inv1 frag1` → **97, HIGH**.
 
 The full data model, scoring function, and UI treatment are specified in
-[docs/superpowers/specs/2026-07-17-chore-cognitive-load.md](../superpowers/specs/2026-07-17-chore-cognitive-load.md).
+[docs/changes/2026-07-17-chore-cognitive-load/spec.md](../changes/2026-07-17-chore-cognitive-load/spec.md).
 Raw inputs are stored (not only the derived score) so the weights can be re-tuned without
 re-surveying the household.
 

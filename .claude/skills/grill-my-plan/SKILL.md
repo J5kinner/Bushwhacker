@@ -20,6 +20,9 @@ load-bearing is left to assumption.
 ## How to run it
 
 - **One question at a time.** Never batch. Each answer shapes the next question.
+- **Read `intent.md` first.** The change's folder under
+  [`docs/changes/`](../../../docs/changes/) says what was actually wanted. Grill the plan against
+  that, and when an answer contradicts it, update the intent rather than letting the two drift.
 - **Answer what the codebase can answer yourself.** Do not ask the user what a quick read of the
   code, schema, or docs would tell you — grep first, then ask only what is genuinely undecided.
 - **Prefer sharp, closed questions.** "Should a checked-off shopping item disappear or grey out?"
@@ -37,6 +40,7 @@ load-bearing is left to assumption.
 | Concurrency | Both partners edit the same list at once — what wins? |
 | Optimistic UI | What does the user see before the server responds, and on rollback? |
 | Boundaries | What is explicitly *out* of scope for this change? |
+| Intent drift | Does this still deliver what `intent.md` asked for, or has it become something else? |
 | Failure | What happens when the Server Action fails or the network drops? |
 
 ## Recording decisions

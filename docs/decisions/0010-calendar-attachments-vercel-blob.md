@@ -6,7 +6,7 @@
 ## Context
 
 The shared-calendar TimeTree-parity plan
-(`docs/superpowers/plans/2026-08-18-shared-calendar-timetree-parity.md`) calls for file and photo
+(`docs/changes/2026-08-18-shared-calendar-timetree-parity/plan.md`) calls for file and photo
 attachments on events — TimeTree premium's flagship feature.
 This is PR 9 of the plan (M6), the final PR of the plan.
 

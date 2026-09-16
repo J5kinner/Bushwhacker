@@ -7,7 +7,8 @@ description: Use when starting any feature, bug, or change in HomeSync that touc
 
 ## Overview
 
-The personal-scale delivery workflow for HomeSync: **plan → confirm → branch → build → verify → PR.**
+The personal-scale delivery workflow for HomeSync:
+**intent → plan → confirm → branch → build → verify → PR.**
 Planning and code land in the *same* PR — this is a two-person project, not a company harness.
 The one rule that is not negotiable: a plan and a confirmation come **before** code.
 
@@ -21,23 +22,34 @@ Skip only for genuinely trivial, single-file edits (a typo, a copy tweak).
 
 ## Workflow
 
-1. **Plan.** Print a short, bulleted implementation plan: what files change, what the data/UI
+1. **Capture intent.** Before planning anything, write `docs/changes/<YYYY-MM-DD-slug>/intent.md`
+   from [the template](../../../docs/changes/TEMPLATE-intent.md): the problem as it is actually
+   experienced, the outcome wanted, the constraints, and what is out of scope.
+   Write it in household language — no table names, no framework names. Confirm it with the user
+   before moving on; an intent you wrote and approved yourself records nothing.
+   Skip only for a genuinely trivial edit.
+2. **Plan.** Print a short, bulleted implementation plan: what files change, what the data/UI
    change is, and what you will verify. Keep it to the request — no speculative scope.
-2. **Forecast review load.** Judge how hard the change will be to review: how many files, how much
+   For anything with real design content, write it up as `spec.md` and `plan.md` in the same
+   folder, so the chain is readable later.
+3. **Forecast review load.** Judge how hard the change will be to review: how many files, how much
    new complexity, how scattered across the codebase. If it looks heavy on any of those — scattered
    especially — split it into multiple PRs landed in dependency order and say so in the plan.
    ([ADR 0002](../../../docs/decisions/0002-reviewer-cognitive-load-index.md) is the reasoning
    behind those three channels. It is a plan-time judgement, not a score to compute: its inputs
    come from a diff that does not exist yet.)
-3. **Grill if non-obvious.** If the plan has open questions or unexamined assumptions, run
+4. **Grill if non-obvious.** If the plan has open questions or unexamined assumptions, run
    [`grill-my-plan`](../grill-my-plan/SKILL.md) first and record any real decision as an ADR.
-4. **Confirm.** Wait for the user's go-ahead on the plan before writing code.
-5. **Branch.** Work on a task-named branch (e.g. `add-shopping-categories`), never on `main`.
-6. **Build.** Implement to the plan. Server Actions for mutations; mobile-first Tailwind;
+   If grilling changes what is actually wanted, update `intent.md` — do not let the plan quietly
+   diverge from it.
+5. **Confirm.** Wait for the user's go-ahead on the plan before writing code.
+6. **Branch.** Work on a task-named branch (e.g. `add-shopping-categories`), never on `main`.
+7. **Build.** Implement to the plan. Server Actions for mutations; mobile-first Tailwind;
    optimistic UI for the shopping and chore lists (see [practices](../../../docs/practices.md)).
-7. **Verify.** `pnpm run build` (which type-checks), `pnpm run lint`, `pnpm test`, and confirm DB
+8. **Verify.** `pnpm run build` (which type-checks), `pnpm run lint`, `pnpm test`, and confirm DB
    queries succeed. Paste the output — no success claims without evidence.
-8. **PR.** Open a PR with [`pr-description`](../pr-description/SKILL.md), open the Vercel preview
+9. **PR.** Open a PR with [`pr-description`](../pr-description/SKILL.md), open the Vercel preview
    on a phone, review your own diff, then self-merge.
 
-If scope grows mid-change, go back to step 1 and re-plan rather than carrying on.
+If scope grows mid-change, go back to step 2 and re-plan rather than carrying on.
+If the *goal* changes, go back to step 1 and rewrite the intent.
