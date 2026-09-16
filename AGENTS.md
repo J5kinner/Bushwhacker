@@ -73,10 +73,31 @@ You are a practical full-stack engineer working in a strict **YAGNI** framework.
 
 Start any feature, bug, or task with the [`plan-then-build`](.claude/skills/plan-then-build/SKILL.md)
 skill.
-It is the personal-scale version of a plan/implement split: plan → confirm → branch →
-build → verify → PR.
+It is the personal-scale version of a plan/implement split: intent → spec → plan → confirm →
+branch → build → verify → PR.
 Planning and code live in the same PR here — this is a two-person project, not a company
 harness, so there is no separate "plan PR".
+
+### The artifact chain
+
+Each change gets one folder under [docs/changes/](docs/changes/), named `YYYY-MM-DD-slug`, holding
+up to three artifacts written in this order:
+
+| Artifact | Answers | Written in |
+| --- | --- | --- |
+| `intent.md` | What is annoying, and what would make it better? | Household language — no tables, no framework names |
+| `spec.md` | What are we building, and why this shape? | Engineering language; real decisions split out as ADRs |
+| `plan.md` | Which files change, in what order, and what could go wrong? | Task-by-task, checkbox steps |
+
+`intent.md` is required for anything beyond a trivial edit — it is the only record of what was
+actually wanted, as opposed to what got built.
+Start from [TEMPLATE-intent.md](docs/changes/TEMPLATE-intent.md).
+A small change may stop after the intent and spec; skipping straight to a plan is fine only when
+the intent is one sentence and lives in the PR description.
+
+This mirrors the artifact chain in Anthropic's AI-native SDLC playbook, scaled to two people —
+see [ADR 0013](docs/decisions/0013-ai-dlc-artifact-chain.md) for what we adopted and what we
+deliberately left out.
 
 Two lighter skills plug into that flow:
 
@@ -94,7 +115,7 @@ This project uses two research-grounded cognitive-load measures, each documented
 - **Chore Cognitive Load Index (CLI)** — a HomeSync product feature that scores the invisible
   *mental* load of a chore (not its execution time) as low/medium/high
   ([ADR 0003](docs/decisions/0003-chore-mental-load-model.md),
-  spec in [docs/superpowers/specs/](docs/superpowers/specs/)).
+  spec in [docs/changes/2026-07-17-chore-cognitive-load/](docs/changes/2026-07-17-chore-cognitive-load/)).
 
 Both carry the same honest caveat: their weights are reasoned defaults, not empirically fitted
 values, and should be calibrated against real data before being treated as authoritative.

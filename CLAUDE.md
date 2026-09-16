@@ -18,4 +18,5 @@ It is the single source of truth and is imported below; read it first.
 - **Decisions.** Architectural decisions are recorded as ADRs under
   [`docs/decisions/`](docs/decisions/); use the
   [template](docs/decisions/0000-adr-template.md).
-- **Specs.** Feature designs live under [`docs/superpowers/specs/`](docs/superpowers/specs/).
+- **Change artifacts.** Each change gets a folder under [`docs/changes/`](docs/changes/) holding
+  `intent.md`, `spec.md` and `plan.md` — see the artifact chain in [AGENTS.md](AGENTS.md).

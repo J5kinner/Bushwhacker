@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js 16 (App Router, TypeScript), Drizzle ORM + Neon Postgres, Tailwind v4, Lucide icons, Leaflet 1.9 + OpenStreetMap tiles (PR 2 only). Unit tests via Node's built-in runner (`node --test`) with native TypeScript type-stripping.
 
-**Spec:** [docs/superpowers/specs/2026-08-10-location-tracker-design.md](../specs/2026-08-10-location-tracker-design.md)
+**Spec:** [spec.md](spec.md)
 
 ## Global Constraints
 
