@@ -55,3 +55,7 @@ Do not record trivia; record the choices that will constrain future work.
 Stop when every branch of the plan is resolved, out-of-scope is written down, and you could hand
 the plan to someone else who would build the same thing.
 Then return to [`plan-then-build`](../plan-then-build/SKILL.md) step 4 (confirm) and proceed.
+
+This hardens the *plan, before code*. It is not the review stage —
+[`review-before-merge`](../review-before-merge/SKILL.md) does that on the finished diff, and the
+two are not run together.

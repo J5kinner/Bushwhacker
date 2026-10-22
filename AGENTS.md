@@ -65,8 +65,10 @@ You are a practical full-stack engineer working in a strict **YAGNI** framework.
   Do **not** add `Co-Authored-By` trailers for AI assistants (Claude, Copilot, etc.).
 - Opening a PR gives you a **Vercel preview URL** — open it on your phone and confirm the
   change before merging.
-- **You self-merge** after reviewing your own PR. An agent may push a non-`main` branch and
-  open a PR, but does not merge or push directly to `main` — that stays a human action.
+- **You do not self-merge.** An agent may push a non-`main` branch and open a PR, but merging
+  and any push directly to `main` are human actions, full stop — the RCLI score in the PR body
+  and the [`review-before-merge`](.claude/skills/review-before-merge/SKILL.md) findings are what
+  the human decides on, and the human makes the call (see [ADR 0015](docs/decisions/0015-agent-code-review.md)).
 - Do not skip hooks or checks unless explicitly asked.
 
 ## Delivery workflow
@@ -74,9 +76,13 @@ You are a practical full-stack engineer working in a strict **YAGNI** framework.
 Start any feature, bug, or task with the [`plan-then-build`](.claude/skills/plan-then-build/SKILL.md)
 skill.
 It is the personal-scale version of a plan/implement split: intent → spec → plan → confirm →
-branch → build → verify → PR.
+branch → build → verify → PR → review → human merge.
 Planning and code live in the same PR here — this is a two-person project, not a company
-harness, so there is no separate "plan PR".
+harness, so there is no separate "plan PR". The last two steps are
+[`review-before-merge`](.claude/skills/review-before-merge/SKILL.md) in a fresh context, and a
+human — not the agent — making the merge call on the strength of the PR's
+[RCLI](docs/decisions/0002-reviewer-cognitive-load-index.md) score and the reviewer's findings
+(see [ADR 0015](docs/decisions/0015-agent-code-review.md)).
 
 ### The artifact chain
 
@@ -99,11 +105,20 @@ This mirrors the artifact chain in Anthropic's AI-native SDLC playbook, scaled t
 see [ADR 0013](docs/decisions/0013-ai-dlc-artifact-chain.md) for what we adopted and what we
 deliberately left out.
 
-Two lighter skills plug into that flow:
+Three lighter skills plug into that flow:
 
 - [`grill-my-plan`](.claude/skills/grill-my-plan/SKILL.md) — stress-test a plan before code,
   and record any real architectural decision as an ADR under [docs/decisions/](docs/decisions/).
-- [`pr-description`](.claude/skills/pr-description/SKILL.md) — write the PR title and body.
+- [`pr-description`](.claude/skills/pr-description/SKILL.md) — write the PR title and body,
+  including the RCLI score/band and the rollback command.
+- [`review-before-merge`](.claude/skills/review-before-merge/SKILL.md) — the last step, the
+  [agent review stage](docs/decisions/0015-agent-code-review.md): a fresh-context read of the
+  finished diff, a security pass, and the RCLI score presented to a human who makes the merge
+call. No self-merge.
+
+To understand a part of the codebase before changing it rather than assuming a stale mental
+model, use [`explain-code`](.claude/skills/explain-code/SKILL.md) to generate a short, current
+explainer for exactly that slice.
 
 ## Cognitive-load metrics
 
