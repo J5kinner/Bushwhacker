@@ -48,8 +48,16 @@ Skip only for genuinely trivial, single-file edits (a typo, a copy tweak).
    optimistic UI for the shopping and chore lists (see [practices](../../../docs/practices.md)).
 8. **Verify.** `pnpm run build` (which type-checks), `pnpm run lint`, `pnpm test`, and confirm DB
    queries succeed. Paste the output — no success claims without evidence.
-9. **PR.** Open a PR with [`pr-description`](../pr-description/SKILL.md), open the Vercel preview
-   on a phone, review your own diff, then self-merge.
+9. **PR.** Open a PR with [`pr-description`](../pr-description/SKILL.md) and open the Vercel
+   preview on a phone to confirm the mobile flow.
+10. **Review.** Run [`review-before-merge`](../review-before-merge/SKILL.md) in a fresh context
+   before trusting the PR: it reads the finished diff, runs the security pass, states the final
+   [RCLI](../../../docs/decisions/0002-reviewer-cognitive-load-index.md) score and its channel
+   breakdown, and says what still needs a human to look at.
+11. **Human merge gate.** No self-merge. The RCLI score and the reviewer's findings are
+   presented to the human, who makes the call — merge, merge after fixing the listed blockers,
+   or split the PR if the score is in the high band or the hard-split override applies. See
+   [ADR 0015](../../../docs/decisions/0015-agent-code-review.md).
 
 If scope grows mid-change, go back to step 2 and re-plan rather than carrying on.
 If the *goal* changes, go back to step 1 and rewrite the intent.

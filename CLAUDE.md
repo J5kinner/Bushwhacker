@@ -15,6 +15,8 @@ It is the single source of truth and is imported below; read it first.
   - `plan-then-build` — start any feature, bug, or change that touches more than one file.
   - `grill-my-plan` — stress-test a plan or design before writing code.
   - `pr-description` — write a pull-request title and body.
+  - `review-before-merge` — review the finished diff and its RCLI score before a human merges.
+  - `explain-code` — generate a short explainer for a slice of the codebase before changing it.
 - **Decisions.** Architectural decisions are recorded as ADRs under
   [`docs/decisions/`](docs/decisions/); use the
   [template](docs/decisions/0000-adr-template.md).
