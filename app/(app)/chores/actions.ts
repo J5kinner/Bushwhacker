@@ -18,12 +18,23 @@ const clamp = (n: number, max: number) =>
 
 export interface AddChoreInput {
   title: string;
-  anticipate: number;
-  identify: number;
-  decide: number;
-  monitor: number;
-  invisible: boolean;
-  fragmentation: number;
+  anticipate?: number;
+  identify?: number;
+  decide?: number;
+  monitor?: number;
+  invisible?: boolean;
+  fragmentation?: number;
+  intervalDays?: number | null;
+}
+
+export interface UpdateChoreInput {
+  title: string;
+  anticipate?: number;
+  identify?: number;
+  decide?: number;
+  monitor?: number;
+  invisible?: boolean;
+  fragmentation?: number;
   intervalDays?: number | null;
 }
 
@@ -36,12 +47,12 @@ export async function addChore(input: AddChoreInput) {
   if (!householdId || !ownerId) return;
 
   const ratings = {
-    anticipate: clamp(input.anticipate, 3) as Rating0to3,
-    identify: clamp(input.identify, 3) as Rating0to3,
-    decide: clamp(input.decide, 3) as Rating0to3,
-    monitor: clamp(input.monitor, 3) as Rating0to3,
-    invisible: input.invisible,
-    fragmentation: clamp(input.fragmentation, 2) as 0 | 1 | 2,
+    anticipate: clamp(input.anticipate ?? 0, 3) as Rating0to3,
+    identify: clamp(input.identify ?? 0, 3) as Rating0to3,
+    decide: clamp(input.decide ?? 0, 3) as Rating0to3,
+    monitor: clamp(input.monitor ?? 0, 3) as Rating0to3,
+    invisible: input.invisible ?? false,
+    fragmentation: clamp(input.fragmentation ?? 0, 2) as 0 | 1 | 2,
   };
   const { score, band } = scoreChoreLoad(ratings);
 
@@ -62,6 +73,63 @@ export async function addChore(input: AddChoreInput) {
       intervalDays,
       nextDueAt: intervalDays ? new Date() : null,
     });
+
+  updateTag(CACHE_TAGS.chores);
+}
+
+export async function updateChore(id: string, input: UpdateChoreInput) {
+  const title = input.title.trim();
+  if (!title) return;
+
+  const householdId = await getHouseholdId();
+  if (!householdId) return;
+
+  const [existing] = await getDb()
+    .select()
+    .from(chores)
+    .where(eq(chores.id, id))
+    .limit(1);
+
+  if (!existing) return;
+
+  const ratings = {
+    anticipate: clamp(input.anticipate ?? existing.anticipate, 3) as Rating0to3,
+    identify: clamp(input.identify ?? existing.identify, 3) as Rating0to3,
+    decide: clamp(input.decide ?? existing.decide, 3) as Rating0to3,
+    monitor: clamp(input.monitor ?? existing.monitor, 3) as Rating0to3,
+    invisible: input.invisible ?? existing.invisible,
+    fragmentation: clamp(input.fragmentation ?? existing.fragmentation, 2) as 0 | 1 | 2,
+  };
+  const { score, band } = scoreChoreLoad(ratings);
+
+  const intervalDays =
+    input.intervalDays !== undefined
+      ? input.intervalDays && input.intervalDays > 0
+        ? clamp(input.intervalDays, 3650)
+        : null
+      : existing.intervalDays;
+
+  let nextDueAt = existing.nextDueAt;
+  if (intervalDays !== existing.intervalDays) {
+    if (intervalDays) {
+      const anchor = existing.lastCompletedAt ?? existing.createdAt;
+      nextDueAt = new Date(anchor.getTime() + intervalDays * 86_400_000);
+    } else {
+      nextDueAt = null;
+    }
+  }
+
+  await getDb()
+    .update(chores)
+    .set({
+      title,
+      ...ratings,
+      cliScore: score,
+      cliBand: band,
+      intervalDays,
+      nextDueAt,
+    })
+    .where(eq(chores.id, id));
 
   updateTag(CACHE_TAGS.chores);
 }
