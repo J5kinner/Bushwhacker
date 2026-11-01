@@ -3,28 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Trash2 } from "lucide-react";
 import type { Chore } from "@/db/schema";
-import { scoreChoreLoad, type CliBand, type Rating0to3 } from "@/lib/chore-load";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import type { AddChoreInput, UpdateChoreInput } from "./actions";
 
 const inputClass =
   "w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-base outline-none focus:border-black/30 dark:border-white/15 dark:focus:border-white/30";
-
-const BAND_STYLES: Record<CliBand, string> = {
-  low: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300",
-  medium: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
-  high: "bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300",
-};
-
-function CliBadge({ score, band }: { score: number; band: CliBand }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 align-middle text-xs font-medium ${BAND_STYLES[band]}`}
-    >
-      {band} · {score}
-    </span>
-  );
-}
 
 const PRESET_INTERVALS = [
   { label: "Weekly (7d)", days: 7 },
@@ -32,13 +15,6 @@ const PRESET_INTERVALS = [
   { label: "Monthly (30d)", days: 30 },
   { label: "Quarterly (90d)", days: 90 },
   { label: "One-off", days: null },
-] as const;
-
-const STAGES = [
-  { key: "anticipate", label: "Anticipate" },
-  { key: "identify", label: "Identify" },
-  { key: "decide", label: "Decide" },
-  { key: "monitor", label: "Monitor" },
 ] as const;
 
 export interface ChoreSheetProps {
@@ -74,18 +50,6 @@ export function ChoreSheet({
   );
   const [customDays, setCustomDays] = useState(
     !isStandardPreset && initialDays ? String(initialDays) : "",
-  );
-
-  // Collapsible mental load state
-  const [ratings, setRatings] = useState({
-    anticipate: (chore?.anticipate ?? 0) as Rating0to3,
-    identify: (chore?.identify ?? 0) as Rating0to3,
-    decide: (chore?.decide ?? 0) as Rating0to3,
-    monitor: (chore?.monitor ?? 0) as Rating0to3,
-  });
-  const [invisible, setInvisible] = useState(chore?.invisible ?? false);
-  const [fragmentation, setFragmentation] = useState<(0 | 1 | 2)>(
-    (chore?.fragmentation ?? 0) as 0 | 1 | 2,
   );
 
   // Confirm delete state
@@ -128,15 +92,6 @@ export function ChoreSheet({
 
   if (!isOpen) return null;
 
-  const preview = scoreChoreLoad({
-    anticipate: ratings.anticipate,
-    identify: ratings.identify,
-    decide: ratings.decide,
-    monitor: ratings.monitor,
-    invisible,
-    fragmentation,
-  });
-
   function getResolvedInterval(): number | null {
     if (selectedInterval === "custom") {
       const parsed = parseInt(customDays, 10);
@@ -153,9 +108,6 @@ export function ChoreSheet({
     const intervalDays = getResolvedInterval();
     const input: AddChoreInput = {
       title: trimmedTitle,
-      ...ratings,
-      invisible,
-      fragmentation,
       intervalDays,
     };
 
@@ -303,72 +255,8 @@ export function ChoreSheet({
             )}
           </div>
 
-          {/* Collapsible cognitive load details */}
-          <details className="rounded-lg border border-black/10 p-3 dark:border-white/15">
-            <summary className="cursor-pointer text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              Mental load details <CliBadge score={preview.score} band={preview.band} />
-            </summary>
-            <p className="mt-2 text-xs text-zinc-500">
-              Score the invisible mental thinking load (0–3 each) required to anticipate, decide, or monitor this chore.
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              {STAGES.map(({ key, label }) => (
-                <label
-                  key={key}
-                  className="flex items-center justify-between gap-2 text-xs"
-                >
-                  {label}
-                  <select
-                    value={ratings[key]}
-                    onChange={(e) =>
-                      setRatings((r) => ({
-                        ...r,
-                        [key]: Number(e.target.value) as Rating0to3,
-                      }))
-                    }
-                    className="rounded border border-black/10 bg-transparent px-2 py-1 text-xs dark:border-white/15"
-                    aria-label={label}
-                  >
-                    {[0, 1, 2, 3].map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-4 text-xs">
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={invisible}
-                  onChange={(e) => setInvisible(e.target.checked)}
-                  className="size-4 accent-current"
-                />
-                Invisible effort
-              </label>
-              <label className="flex items-center gap-1.5">
-                Fragmentation
-                <select
-                  value={fragmentation}
-                  onChange={(e) =>
-                    setFragmentation(Number(e.target.value) as 0 | 1 | 2)
-                  }
-                  className="rounded border border-black/10 bg-transparent px-2 py-1 text-xs dark:border-white/15"
-                  aria-label="Fragmentation"
-                >
-                  <option value={0}>0 (uninterrupted)</option>
-                  <option value={1}>1 (interrupted)</option>
-                  <option value={2}>2 (highly fragmented)</option>
-                </select>
-              </label>
-            </div>
-          </details>
-
           {/* Action buttons */}
-          <div className="flex items-center justify-between gap-3 pt-2">
+          <div className="flex items-center justify-between gap-3 pt-3">
             {isEditing && onDelete ? (
               <button
                 type="button"
@@ -407,4 +295,3 @@ export function ChoreSheet({
     </div>
   );
 }
-

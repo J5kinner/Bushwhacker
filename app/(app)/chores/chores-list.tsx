@@ -4,7 +4,7 @@ import { useOptimistic, useState, useTransition, useSyncExternalStore } from "re
 import { Plus, Check, ChevronRight, Sparkles } from "lucide-react";
 import type { Chore } from "@/db/schema";
 import type { HouseholdMember } from "@/lib/queries";
-import { scoreChoreLoad, type CliBand, type Rating0to3 } from "@/lib/chore-load";
+import type { CliBand } from "@/lib/chore-load";
 import {
   calculateChoreDecay,
   getNextTurn,
@@ -152,15 +152,6 @@ export function ChoresList({
       const existing = optimistic.find((c) => c.id === choreId);
       if (!existing) return;
 
-      const preview = scoreChoreLoad({
-        anticipate: (input.anticipate ?? existing.anticipate) as Rating0to3,
-        identify: (input.identify ?? existing.identify) as Rating0to3,
-        decide: (input.decide ?? existing.decide) as Rating0to3,
-        monitor: (input.monitor ?? existing.monitor) as Rating0to3,
-        invisible: input.invisible ?? existing.invisible,
-        fragmentation: (input.fragmentation ?? existing.fragmentation) as 0 | 1 | 2,
-      });
-
       const intervalDays =
         input.intervalDays !== undefined ? input.intervalDays : existing.intervalDays;
       let nextDueAt = existing.nextDueAt;
@@ -176,14 +167,6 @@ export function ChoresList({
       const updatedChore: Chore = {
         ...existing,
         title: input.title,
-        anticipate: input.anticipate ?? existing.anticipate,
-        identify: input.identify ?? existing.identify,
-        decide: input.decide ?? existing.decide,
-        monitor: input.monitor ?? existing.monitor,
-        invisible: input.invisible ?? existing.invisible,
-        fragmentation: (input.fragmentation ?? existing.fragmentation) as 0 | 1 | 2,
-        cliScore: preview.score,
-        cliBand: preview.band,
         intervalDays,
         nextDueAt,
       };
@@ -193,15 +176,6 @@ export function ChoresList({
       );
     } else {
       // Creating new chore
-      const preview = scoreChoreLoad({
-        anticipate: (input.anticipate ?? 0) as Rating0to3,
-        identify: (input.identify ?? 0) as Rating0to3,
-        decide: (input.decide ?? 0) as Rating0to3,
-        monitor: (input.monitor ?? 0) as Rating0to3,
-        invisible: input.invisible ?? false,
-        fragmentation: (input.fragmentation ?? 0) as 0 | 1 | 2,
-      });
-
       const intervalDays =
         input.intervalDays && input.intervalDays > 0 ? input.intervalDays : null;
 
@@ -210,14 +184,14 @@ export function ChoresList({
         householdId: "optimistic",
         ownerId: currentUserId ?? "optimistic",
         title: input.title,
-        anticipate: input.anticipate ?? 0,
-        identify: input.identify ?? 0,
-        decide: input.decide ?? 0,
-        monitor: input.monitor ?? 0,
-        invisible: input.invisible ?? false,
-        fragmentation: (input.fragmentation ?? 0) as 0 | 1 | 2,
-        cliScore: preview.score,
-        cliBand: preview.band,
+        anticipate: 0,
+        identify: 0,
+        decide: 0,
+        monitor: 0,
+        invisible: false,
+        fragmentation: 0,
+        cliScore: 0,
+        cliBand: "low",
         intervalDays,
         lastCompletedAt: null,
         lastCompletedById: null,
@@ -404,7 +378,7 @@ export function ChoresList({
                             </div>
                           )}
 
-                          {/* Metadata row: Turn badge & Mental load badge */}
+                          {/* Metadata row: Turn badge */}
                           <div className="mt-1 flex flex-wrap items-center gap-2">
                             <span
                               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -416,10 +390,12 @@ export function ChoresList({
                               {turn.label}
                             </span>
 
-                            <CliBadge
-                              score={chore.cliScore}
-                              band={chore.cliBand}
-                            />
+                            {chore.cliScore > 0 && (
+                              <CliBadge
+                                score={chore.cliScore}
+                                band={chore.cliBand}
+                              />
+                            )}
                           </div>
                         </div>
 
