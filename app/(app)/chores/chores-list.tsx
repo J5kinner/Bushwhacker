@@ -164,11 +164,25 @@ export function ChoresList({
         }
       }
 
+      let lastCompletedById = existing.lastCompletedById;
+      let ownerId = existing.ownerId;
+      if (input.nextTurnUserId) {
+        const other = members.find((m) => m.id !== input.nextTurnUserId);
+        if (other) {
+          lastCompletedById = other.id;
+        }
+        if (!existing.lastCompletedAt) {
+          ownerId = input.nextTurnUserId;
+        }
+      }
+
       const updatedChore: Chore = {
         ...existing,
         title: input.title,
         intervalDays,
         nextDueAt,
+        lastCompletedById,
+        ownerId,
       };
 
       run({ type: "update", chore: updatedChore }, () =>
@@ -179,10 +193,12 @@ export function ChoresList({
       const intervalDays =
         input.intervalDays && input.intervalDays > 0 ? input.intervalDays : null;
 
+      const ownerId = input.nextTurnUserId ?? currentUserId ?? "optimistic";
+
       const temp: Chore = {
         id: crypto.randomUUID(),
         householdId: "optimistic",
-        ownerId: currentUserId ?? "optimistic",
+        ownerId,
         title: input.title,
         anticipate: 0,
         identify: 0,
@@ -418,6 +434,8 @@ export function ChoresList({
       <ChoreSheet
         key={editingChore?.id ?? "new"}
         chore={editingChore}
+        members={members}
+        currentUserId={currentUserId}
         isOpen={sheetOpen}
         onClose={() => {
           setSheetOpen(false);

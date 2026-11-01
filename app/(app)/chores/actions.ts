@@ -6,7 +6,7 @@ import { getDb } from "@/db";
 import { chores } from "@/db/schema";
 import { getHouseholdId, getCurrentUserId } from "@/lib/household";
 import { scoreChoreLoad, type Rating0to3 } from "@/lib/chore-load";
-import { CACHE_TAGS } from "@/lib/queries";
+import { CACHE_TAGS, getHouseholdMembers } from "@/lib/queries";
 
 // A chore needs both a seeded household and a household member to own the
 // thinking for it (chores.owner_id is NOT NULL), so these writes fail closed on
@@ -25,6 +25,7 @@ export interface AddChoreInput {
   invisible?: boolean;
   fragmentation?: number;
   intervalDays?: number | null;
+  nextTurnUserId?: string | null;
 }
 
 export interface UpdateChoreInput {
@@ -36,6 +37,7 @@ export interface UpdateChoreInput {
   invisible?: boolean;
   fragmentation?: number;
   intervalDays?: number | null;
+  nextTurnUserId?: string | null;
 }
 
 export async function addChore(input: AddChoreInput) {
@@ -43,7 +45,7 @@ export async function addChore(input: AddChoreInput) {
   if (!title) return;
 
   const householdId = await getHouseholdId();
-  const ownerId = await getCurrentUserId();
+  const ownerId = input.nextTurnUserId ?? (await getCurrentUserId());
   if (!householdId || !ownerId) return;
 
   const ratings = {
@@ -119,6 +121,20 @@ export async function updateChore(id: string, input: UpdateChoreInput) {
     }
   }
 
+  let lastCompletedById = existing.lastCompletedById;
+  let ownerId = existing.ownerId;
+
+  if (input.nextTurnUserId) {
+    const members = await getHouseholdMembers();
+    const other = members.find((m) => m.id !== input.nextTurnUserId);
+    if (other) {
+      lastCompletedById = other.id;
+    }
+    if (!existing.lastCompletedAt) {
+      ownerId = input.nextTurnUserId;
+    }
+  }
+
   await getDb()
     .update(chores)
     .set({
@@ -128,6 +144,8 @@ export async function updateChore(id: string, input: UpdateChoreInput) {
       cliBand: band,
       intervalDays,
       nextDueAt,
+      lastCompletedById,
+      ownerId,
     })
     .where(eq(chores.id, id));
 

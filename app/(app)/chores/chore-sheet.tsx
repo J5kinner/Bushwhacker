@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Trash2 } from "lucide-react";
 import type { Chore } from "@/db/schema";
+import type { HouseholdMember } from "@/lib/queries";
+import { getNextTurn } from "@/lib/chore-decay";
 import { useKeyboardInset } from "@/lib/use-keyboard-inset";
 import type { AddChoreInput, UpdateChoreInput } from "./actions";
 
@@ -19,6 +21,8 @@ const PRESET_INTERVALS = [
 
 export interface ChoreSheetProps {
   chore?: Chore | null;
+  members?: HouseholdMember[];
+  currentUserId?: string | null;
   isOpen: boolean;
   onClose: () => void;
   onSave: (input: AddChoreInput | UpdateChoreInput, choreId?: string) => void | Promise<void>;
@@ -27,6 +31,8 @@ export interface ChoreSheetProps {
 
 export function ChoreSheet({
   chore,
+  members = [],
+  currentUserId = null,
   isOpen,
   onClose,
   onSave,
@@ -50,6 +56,14 @@ export function ChoreSheet({
   );
   const [customDays, setCustomDays] = useState(
     !isStandardPreset && initialDays ? String(initialDays) : "",
+  );
+
+  // Turn selection
+  const initialTurnUserId = chore
+    ? getNextTurn(chore, members, currentUserId).memberId
+    : currentUserId ?? members[0]?.id ?? null;
+  const [selectedTurnUserId, setSelectedTurnUserId] = useState<string | null>(
+    initialTurnUserId,
   );
 
   // Confirm delete state
@@ -109,6 +123,7 @@ export function ChoreSheet({
     const input: AddChoreInput = {
       title: trimmedTitle,
       intervalDays,
+      nextTurnUserId: selectedTurnUserId,
     };
 
     onSave(input, chore?.id);
@@ -254,6 +269,34 @@ export function ChoreSheet({
               </div>
             )}
           </div>
+
+          {/* Whose turn selector chips */}
+          {members.length > 1 && (
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Whose turn?
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {members.map((member) => {
+                  const active = selectedTurnUserId === member.id;
+                  return (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => setSelectedTurnUserId(member.id)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        active
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-black/10 hover:border-black/30 dark:border-white/15 dark:hover:border-white/30"
+                      }`}
+                    >
+                      {member.name} {member.id === currentUserId ? "(You)" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="flex items-center justify-between gap-3 pt-3">
