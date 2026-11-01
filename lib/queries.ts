@@ -1,68 +1,34 @@
 import { unstable_cache } from "next/cache";
-import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import type { Session } from "next-auth";
 import { getDb } from "@/db";
-import type { Activity, CalendarEvent, EventAttachment, EventComment } from "@/db/schema";
 import {
   shoppingItems,
   shoppingCategories,
-  calendarEvents,
-  eventExdates,
-  eventComments,
-  eventAttachments,
-  activity,
   chores,
   recipes,
   users,
   userLocations,
-  financeAccounts,
-  financeImports,
-  financeTransactions,
-  financeGoals,
-  financeAnalyses,
 } from "@/db/schema";
-import type { Exdate } from "@/lib/recurrence";
 import { DEFAULT_SHOPPING_CATEGORIES } from "./shopping-categories";
 import { getHouseholdId, getCurrentUserId } from "./household";
 import { timed } from "./timing";
-import {
-  summariseFinanceTransactions,
-  summariseFinanceTransactionsByAccount,
-  type FinanceMonthOverview,
-  type FinanceAccountTotals,
-} from "./finance-overview";
-import {
-  FINANCE_ACCOUNT_KINDS,
-  FINANCE_ACCOUNT_KIND_LABELS,
-  type FinanceAccountKind,
-} from "./finance-import";
 import { isDbConfigured } from "@/db";
 
 /**
  * Read queries are cached server-side under a tag per domain, so navigations
- * are answered from the cache instead of Neon. Server Actions revalidate the
- * matching tag after each mutation, so the cache is never stale — see
- * CACHE_TAGS for the tag each mutation must bust.
+ * are answered from the cache instead of Neon.
+ * Server Actions revalidate the matching tag after each mutation, so the cache is never stale —
+ * see CACHE_TAGS for the tag each mutation must bust.
  */
 export const CACHE_TAGS = {
   shoppingItems: "shopping-items",
   shoppingCategories: "shopping-categories",
-  calendarEvents: "calendar-events",
   chores: "chores",
   recipes: "recipes",
   // Nothing in-app mutates a user row today, so nothing busts this tag yet —
   // it exists for correctness if that ever changes, not because it is needed now.
   users: "users",
-  eventComments: "event-comments",
-  activity: "activity",
-  // No dedicated tag — attachment add/remove busts `calendarEvents` instead
-  // (the cache-tag matrix, design decision 6 of the shared-calendar plan;
-  // see getEventAttachments below for the read-side half of that choice).
-  financeAccounts: "finance-accounts",
-  financeImports: "finance-imports",
-  financeTransactions: "finance-transactions",
-  financeGoals: "finance-goals",
-  financeAnalyses: "finance-analyses",
 } as const;
 
 const fetchShoppingItems = unstable_cache(
@@ -155,395 +121,6 @@ export async function getRecipes() {
   return fetchRecipes(householdId);
 }
 
-const fetchFinanceImports = unstable_cache(
-  (householdId: string) =>
-    timed("finance-imports", () =>
-      getDb()
-        .select({
-          id: financeImports.id,
-          filename: financeImports.filename,
-          rowCount: financeImports.rowCount,
-          periodStart: financeImports.periodStart,
-          periodEnd: financeImports.periodEnd,
-          importedAt: financeImports.importedAt,
-          accountName: financeAccounts.name,
-        })
-        .from(financeImports)
-        .innerJoin(financeAccounts, eq(financeAccounts.id, financeImports.accountId))
-        .where(eq(financeImports.householdId, householdId))
-        .orderBy(desc(financeImports.importedAt))
-        .limit(20),
-    ),
-  ["finance-imports"],
-  { tags: [CACHE_TAGS.financeImports] },
-);
-
-/** The household's most recent statement imports, newest first. Empty if no DB/household. */
-export async function getFinanceImports() {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchFinanceImports(householdId);
-}
-
-const fetchFinancePeriodTransactions = unstable_cache(
-  (householdId: string, from: string, to: string) =>
-    timed("finance-period-transactions", () =>
-      getDb()
-        .select({
-          accountId: financeTransactions.accountId,
-          amountCents: financeTransactions.amountCents,
-          category: financeTransactions.category,
-        })
-        .from(financeTransactions)
-        .where(
-          and(
-            eq(financeTransactions.householdId, householdId),
-            gte(financeTransactions.postedDate, from),
-            lte(financeTransactions.postedDate, to),
-          ),
-        ),
-    ),
-  ["finance-period-transactions"],
-  { tags: [CACHE_TAGS.financeTransactions] },
-);
-
-const EMPTY_FINANCE_OVERVIEW: FinanceMonthOverview = {
-  incomeCents: 0,
-  expenseCents: 0,
-  netCents: 0,
-  categories: [],
-};
-
-/**
- * Income, expenses, net, and a spend-by-category breakdown for the inclusive
- * `[from, to]` "YYYY-MM-DD" window (see lib/finance-period.ts, which is the
- * only caller that computes those bounds — this function never derives
- * "today" itself, the same rule getCalendarWindow follows below).
- *
- * The aggregation itself is summariseFinanceTransactions (lib/finance-overview.ts),
- * a pure function shared with scripts/finance-narrate.mjs, which reads the
- * same rows outside the Next.js runtime — see ADR 0012.
- */
-export async function getFinanceMonthOverview(
-  from: string,
-  to: string,
-): Promise<FinanceMonthOverview> {
-  const householdId = await getHouseholdId();
-  if (!householdId) return EMPTY_FINANCE_OVERVIEW;
-  const rows = await fetchFinancePeriodTransactions(householdId, from, to);
-  return summariseFinanceTransactions(rows);
-}
-
-const fetchFinanceAccounts = unstable_cache(
-  (householdId: string) =>
-    timed("finance-accounts", () =>
-      getDb()
-        .select()
-        .from(financeAccounts)
-        .where(eq(financeAccounts.householdId, householdId)),
-    ),
-  ["finance-accounts"],
-  { tags: [CACHE_TAGS.financeAccounts] },
-);
-
-/** The household's finance accounts (however many of the 3 kinds have been imported at least once). */
-export async function getFinanceAccounts() {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchFinanceAccounts(householdId);
-}
-
-export type FinanceAccountBreakdownRow = FinanceAccountTotals & {
-  kind: FinanceAccountKind;
-  name: string;
-};
-
-/**
- * Income/expense/net for each of the 3 account kinds for the inclusive
- * `[from, to]` window, shown separately rather than combined (see
- * finance-account-breakdown.tsx). Always returns all 3 kinds, zeroed for one
- * that has never had a statement imported yet, so the household sees "no
- * data yet" rather than a missing row.
- */
-export async function getFinanceAccountBreakdown(
-  from: string,
-  to: string,
-): Promise<FinanceAccountBreakdownRow[]> {
-  const householdId = await getHouseholdId();
-  if (!householdId) {
-    return FINANCE_ACCOUNT_KINDS.map((kind) => ({
-      kind,
-      name: FINANCE_ACCOUNT_KIND_LABELS[kind],
-      incomeCents: 0,
-      expenseCents: 0,
-      netCents: 0,
-    }));
-  }
-
-  const [accounts, rows] = await Promise.all([
-    fetchFinanceAccounts(householdId),
-    fetchFinancePeriodTransactions(householdId, from, to),
-  ]);
-  const totalsByAccountId = summariseFinanceTransactionsByAccount(rows);
-  const accountIdByKind = new Map(accounts.map((a) => [a.kind, a.id]));
-
-  return FINANCE_ACCOUNT_KINDS.map((kind) => {
-    const accountId = accountIdByKind.get(kind);
-    const totals = accountId ? totalsByAccountId.get(accountId) : undefined;
-    return {
-      kind,
-      name: FINANCE_ACCOUNT_KIND_LABELS[kind],
-      incomeCents: totals?.incomeCents ?? 0,
-      expenseCents: totals?.expenseCents ?? 0,
-      netCents: totals?.netCents ?? 0,
-    };
-  });
-}
-
-const fetchFinanceGoals = unstable_cache(
-  (householdId: string) =>
-    timed("finance-goals", () =>
-      getDb()
-        .select()
-        .from(financeGoals)
-        .where(and(eq(financeGoals.householdId, householdId), isNull(financeGoals.archivedAt)))
-        .orderBy(asc(financeGoals.createdAt)),
-    ),
-  ["finance-goals"],
-  { tags: [CACHE_TAGS.financeGoals] },
-);
-
-/** The household's active (non-archived) goals, oldest first. Empty if no DB/household. */
-export async function getFinanceGoals() {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchFinanceGoals(householdId);
-}
-
-const fetchFinanceAnalyses = unstable_cache(
-  (householdId: string) =>
-    timed("finance-analyses", () =>
-      getDb()
-        .select()
-        .from(financeAnalyses)
-        .where(eq(financeAnalyses.householdId, householdId))
-        .orderBy(desc(financeAnalyses.createdAt))
-        .limit(12),
-    ),
-  ["finance-analyses"],
-  { tags: [CACHE_TAGS.financeAnalyses] },
-);
-
-/**
- * The household's most recent local-model narratives (ADR 0012), newest
- * first. Empty until scripts/finance-narrate.mjs has been run at least once,
- * or if there is no DB/household.
- */
-export async function getFinanceAnalyses() {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchFinanceAnalyses(householdId);
-}
-
-async function selectCalendarWindow(
-  householdId: string,
-  from: string,
-  to: string,
-): Promise<{ events: CalendarEvent[]; exdates: Exdate[] }> {
-  const db = getDb();
-
-  const [events, exdates] = await Promise.all([
-    db
-      .select()
-      .from(calendarEvents)
-      .where(
-        and(
-          eq(calendarEvents.householdId, householdId),
-          or(
-            // A plain event (or override row) overlaps the window at its own
-            // dates. A trip's endDate can be null (single-day event); its
-            // effective end for overlap purposes is then its own startDate.
-            and(
-              lte(calendarEvents.startDate, to),
-              gte(sql`coalesce(${calendarEvents.endDate}, ${calendarEvents.startDate})`, from),
-            ),
-            // A recurrence master can have started long before `from` and
-            // still generate occurrences inside the window (a weekly event
-            // from years ago, say) — its own span is irrelevant here, only
-            // whether it's still repeating by the time the window opens.
-            and(
-              isNotNull(calendarEvents.repeatFreq),
-              lte(calendarEvents.startDate, to),
-              or(isNull(calendarEvents.repeatUntil), gte(calendarEvents.repeatUntil, from)),
-            ),
-          ),
-        ),
-      )
-      .orderBy(asc(calendarEvents.startDate)),
-    // Exdates for this household's events, joined back to calendar_events
-    // because event_exdates carries no household_id of its own — the join is
-    // the household scope. Mapped to the lib's `Exdate` shape ({ eventId,
-    // date }) so this file stays the only place that knows the DB column is
-    // called event_id.
-    db
-      .select({ eventId: eventExdates.eventId, date: eventExdates.date })
-      .from(eventExdates)
-      .innerJoin(calendarEvents, eq(eventExdates.eventId, calendarEvents.id))
-      .where(eq(calendarEvents.householdId, householdId)),
-  ]);
-
-  return { events, exdates };
-}
-
-/**
- * Raw event rows overlapping the inclusive `[from, to]` "YYYY-MM-DD" window,
- * plus their exdates — the caller runs `expandOccurrences` (lib/recurrence.ts)
- * over the result to get concrete Occurrence[]. Both queries live inside this
- * one `unstable_cache` call (same key, same tag) so a mutation's single
- * `updateTag(CACHE_TAGS.calendarEvents)` busts events and exdates together —
- * there is no way for one to go stale while the other refreshes.
- *
- * CRITICAL: `from`/`to` are always the caller's window bounds (see
- * app/calendar/page.tsx) — never derive them from `Date.now()`/"today" in
- * here. This function's whole job is to be a pure cache key -> rows mapping;
- * if "today" were computed inside it instead, the first request to populate a
- * given window's cache entry would freeze that day into the cached result
- * until the tag is next busted, silently going stale for every other viewer
- * on every later day.
- */
-export async function getCalendarWindow(
-  from: string,
-  to: string,
-): Promise<{ events: CalendarEvent[]; exdates: Exdate[] }> {
-  const householdId = await getHouseholdId();
-  if (!householdId) return { events: [], exdates: [] };
-
-  return unstable_cache(
-    () => timed("calendar-window", () => selectCalendarWindow(householdId, from, to)),
-    ["calendar-window", householdId, from, to],
-    { tags: [CACHE_TAGS.calendarEvents] },
-  )();
-}
-
-const fetchEventComments = unstable_cache(
-  (householdId: string) =>
-    getDb()
-      .select({
-        id: eventComments.id,
-        eventId: eventComments.eventId,
-        authorId: eventComments.authorId,
-        body: eventComments.body,
-        createdAt: eventComments.createdAt,
-      })
-      .from(eventComments)
-      // event_comments carries no household_id of its own, so the join back
-      // to calendar_events is the household scope — same pattern as the
-      // exdates join in selectCalendarWindow above.
-      .innerJoin(calendarEvents, eq(eventComments.eventId, calendarEvents.id))
-      .where(eq(calendarEvents.householdId, householdId))
-      .orderBy(asc(eventComments.createdAt)),
-  ["event-comments"],
-  { tags: [CACHE_TAGS.eventComments] },
-);
-
-/**
- * Every comment on this household's events, oldest first. Comments flow
- * through server-rendered props rather than a one-shot client fetch (design
- * decision 5 of the shared-calendar plan), so the 15s LiveRefresh poll keeps
- * an open thread current the same way every other cached read does.
- * Filtering down to one event's slice happens client-side
- * (app/calendar/calendar-events.tsx) — the household's whole comment history
- * is a small, single cached read, not worth a query per event.
- */
-export async function getEventComments(): Promise<EventComment[]> {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchEventComments(householdId);
-}
-
-const fetchEventAttachments = unstable_cache(
-  (householdId: string) =>
-    getDb()
-      .select({
-        id: eventAttachments.id,
-        eventId: eventAttachments.eventId,
-        url: eventAttachments.url,
-        pathname: eventAttachments.pathname,
-        filename: eventAttachments.filename,
-        contentType: eventAttachments.contentType,
-        size: eventAttachments.size,
-        uploadedById: eventAttachments.uploadedById,
-        createdAt: eventAttachments.createdAt,
-      })
-      .from(eventAttachments)
-      // event_attachments carries no household_id of its own, so the join
-      // back to calendar_events is the household scope — same pattern as
-      // getEventComments' own join above.
-      .innerJoin(calendarEvents, eq(eventAttachments.eventId, calendarEvents.id))
-      .where(eq(calendarEvents.householdId, householdId))
-      .orderBy(asc(eventAttachments.createdAt)),
-  ["event-attachments"],
-  // Tagged `calendarEvents`, not a dedicated `event-attachments` tag: the
-  // cache-tag matrix (design decision 6 of the shared-calendar plan) routes
-  // attachment add/remove through the same tag as every other calendar
-  // mutation, so this read only needs to share that one tag rather than
-  // introduce a second one every attachment action would then also have to
-  // bust in lockstep.
-  { tags: [CACHE_TAGS.calendarEvents] },
-);
-
-/**
- * Every attachment on this household's events. Filtering down to one
- * event's own attachments happens client-side (app/calendar/calendar-events.tsx),
- * the same pattern getEventComments already uses for comments — the
- * household's whole attachment list is one small cached read, not worth a
- * query per event.
- */
-export async function getEventAttachments(): Promise<EventAttachment[]> {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchEventAttachments(householdId);
-}
-
-const fetchActivity = unstable_cache(
-  (householdId: string) =>
-    getDb()
-      .select()
-      .from(activity)
-      .where(eq(activity.householdId, householdId))
-      .orderBy(desc(activity.createdAt))
-      .limit(50),
-  ["activity"],
-  { tags: [CACHE_TAGS.activity] },
-);
-
-/** The household's latest ~50 activity rows, newest first. */
-export async function getActivity(): Promise<Activity[]> {
-  const householdId = await getHouseholdId();
-  if (!householdId) return [];
-  return fetchActivity(householdId);
-}
-
-/**
- * The signed-in member's own `activity_seen_at`, read directly rather than
- * through `unstable_cache`. `getActivity` above is cached per household and
- * shared by both members, so baking either partner's seen state into it
- * would leak one partner's read state into the other's badge (design
- * decision 5 of the shared-calendar plan) — this small, uncached row lookup
- * is the deliberate exception. The caller (app/calendar/page.tsx) combines
- * this with the cached activity rows to compute the unread count itself.
- */
-export async function getCurrentUserActivitySeenAt(): Promise<Date | null> {
-  const userId = await getCurrentUserId();
-  if (!userId) return null;
-  const [row] = await getDb()
-    .select({ activitySeenAt: users.activitySeenAt })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  return row?.activitySeenAt ?? null;
-}
-
 const fetchChores = unstable_cache(
   (householdId: string) =>
     timed("chores", () =>
@@ -590,8 +167,8 @@ export async function getHouseholdMembers(): Promise<HouseholdMember[]> {
 }
 
 /**
- * A household member and their latest position, if any. The position fields are
- * null both for a member who has never shared and for one who has sharing
+ * A household member and their latest position, if any.
+ * The position fields are null both for a member who has never shared and for one who has sharing
  * turned off, which the page distinguishes using `sharing`.
  */
 export interface MemberLocation {
@@ -609,11 +186,12 @@ export interface MemberLocation {
  * Every household member with their latest known position, name order.
  *
  * Deliberately NOT wrapped in unstable_cache, unlike every other read in this
- * file. Two reasons: the writer is an external HTTP client rather than a Server
+ * file.
+ * Two reasons: the writer is an external HTTP client rather than a Server
  * Action, so the "mutate then bust the tag" pairing the others rely on does not
  * apply; and a stale cache here shows a confidently wrong pin, which is a worse
- * failure than a slightly old shopping list. The cost is two rows queried only
- * while somebody has the map open.
+ * failure than a slightly old shopping list.
+ * The cost is two rows queried only while somebody has the map open.
  */
 export async function getMemberLocations(): Promise<MemberLocation[]> {
   const householdId = await getHouseholdId();
@@ -639,7 +217,8 @@ export async function getMemberLocations(): Promise<MemberLocation[]> {
 }
 
 /**
- * The signed-in member's dark-mode preference. Defaults to false if unset/signed out.
+ * The signed-in member's dark-mode preference.
+ * Defaults to false if unset/signed out.
  * Accepts an already-resolved session, so callers that already called `auth()`
  * (e.g. the root layout) don't trigger a second session lookup.
  */
